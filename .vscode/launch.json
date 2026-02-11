@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Root Binary",
+            "program": "${workspaceFolder}/target/debug/haraltr",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "terminate-and-sudo-warmup",
+            "sourceLanguages": [
+                "rust"
+            ],
+            "debuggerRoot": "${workspaceFolder}/codelldb-sudo"
+        }
+    ]
+}

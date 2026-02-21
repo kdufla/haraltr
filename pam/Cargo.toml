@@ -3,7 +3,6 @@ name = "pam"
 version = "0.1.0"
 edition = "2024"
 
-
 [lib]
 # This is crucial: it tells the compiler to create a .so file
 crate-type = ["cdylib"]

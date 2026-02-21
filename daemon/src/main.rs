@@ -1,5 +1,6 @@
 mod bt_mgmt;
 mod kalman;
+mod session;
 
 use bdaddr::Address;
 use std::time::Duration;
@@ -8,15 +9,22 @@ use colored::Colorize;
 use tokio::time;
 
 use crate::bt_mgmt::BtMgmt;
+use crate::session::SessionController;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     const PHONE_MAC: &str = "24:29:34:8E:0A:58";
+    // const PHONE_MAC: &str = "F4:EE:25:B1:B1:6E";
+
     let mut bt_mgmt = BtMgmt::new(PHONE_MAC.parse::<Address>().unwrap().into())?;
 
     println!("Monitoring {}...", PHONE_MAC);
 
     let mut interval = time::interval(Duration::from_millis(200));
+
+    let _x = SessionController::new().await.unwrap();
+    // _x.lock().await.unwrap();
+    // _x.unlock().await.unwrap();
 
     loop {
         interval.tick().await;

@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common = { path = "../common" }
 bdaddr = "0.1.2"
 bluer = { version = "0.17", features = ["full"] }
 btmgmt = "0.2.5"
 btmgmt-packet = "0.2.5"
 chrono = "0.4.43"
 colored = "3.1.1"
+common = { path = "../common" }
 futures = "0.3"
 libc = "0.2.180"
+serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+zbus = "5.13.2"

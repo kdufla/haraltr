@@ -35,6 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // time::sleep(Duration::from_secs(3)).await;
 
+    init_tracing();
+
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     // wake_up(rx);

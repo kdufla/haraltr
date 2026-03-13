@@ -1,6 +1,7 @@
 use btmgmt::command::GetConnectionInformation;
 use btmgmt::{Client, client::Result};
 use btmgmt_packet::{Address, AddressType};
+use tracing::{debug, trace};
 
 use crate::kalman::KalmanFilter;
 
@@ -25,9 +26,10 @@ impl BtMgmt {
 
     pub async fn relative_path_loss(&mut self) -> Result<f64> {
         let (rssi, tx_power) = self.get_connection_information().await?;
-        let cur_measurement = tx_power as f64 - rssi as f64;
-        let denoised_val = self.denoise_filter.update(cur_measurement);
-        Ok(denoised_val)
+        let raw_rpl = tx_power as f64 - rssi as f64;
+        let filtered_rpl = self.denoise_filter.update(raw_rpl);
+        debug!(raw_rpl, filtered_rpl, "relative path loss");
+        Ok(filtered_rpl)
     }
 
     async fn get_connection_information(&self) -> Result<(i8, i8)> {
@@ -36,6 +38,7 @@ impl BtMgmt {
 
         let rssi = *reply.rssi() as i8;
         let tx_power = *reply.tx_power() as i8;
+        trace!(rssi, tx_power, "connection info");
 
         Ok((rssi, tx_power))
     }

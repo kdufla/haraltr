@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 use tokio::time;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::input::{VirtualKeyboard, VirtualMouse};
 
@@ -31,6 +31,7 @@ pub async fn wake_up(
                 }
             }
             _ = enter_tick.tick() => {
+                debug!("sending enter");
                 if let Err(e) = keyboard.press_enter() {
                     warn!("enter press failed: {e}");
                 }

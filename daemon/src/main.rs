@@ -1,88 +1,99 @@
 mod bt_mgmt;
 mod input;
 mod kalman;
+mod proximity;
 mod session;
 mod wake_up;
 
 use bdaddr::Address;
-use colored::Colorize;
 use std::time::Duration;
-use tokio::time::Instant;
-use tokio::{select, time};
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::time;
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::bt_mgmt::BtMgmt;
+use crate::proximity::{Action, Reading, State};
 use crate::session::SessionController;
-use crate::wake_up::wake_up;
+use crate::wake_up::wake_screen;
+
+const PHONE_MAC: &str = "24:29:34:8E:0A:58";
+const POLL_INTERVAL_MS: u64 = 2000;
+const DISCONNECT_POLL_INTERVAL_MS: u64 = 5000;
+const WAKE_DURATION: Duration = Duration::from_secs(3);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // const PHONE_MAC: &str = "24:29:34:8E:0A:58";
-    // const PHONE_MAC: &str = "F4:EE:25:B1:B1:6E";
-
-    // let mut bt_mgmt = BtMgmt::new(PHONE_MAC.parse::<Address>().unwrap().into())?;
-
-    // println!("Monitoring {}...", PHONE_MAC);
-
-    // let mut interval = time::interval(Duration::from_millis(2000));
-
-    // let controller = SessionController::new().await.unwrap();
-    // println!("{:?}", controller);
-
-    // time::sleep(Duration::from_secs(3)).await;
-
-    // controller.lock().await.unwrap();
-
-    // time::sleep(Duration::from_secs(3)).await;
-
     init_tracing();
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut bt = BtMgmt::new(PHONE_MAC.parse::<Address>().unwrap().into())?;
+    let session = SessionController::new().await?;
+    let mut state = State::new(Action::Lock);
+    let mut interval = time::interval(Duration::from_millis(POLL_INTERVAL_MS));
 
-    // wake_up(rx);
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
 
-    select! {
-        _ = wake_up(rx) => (),
-        _ = time::sleep(Duration::from_secs(10)) => tx.send(()).unwrap(),
-    };
+    info!("daemon started, monitoring {PHONE_MAC}");
 
-    // controller.unlock().await.unwrap();
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = sigterm.recv() => {
+                info!("received SIGTERM, shutting down");
+                break;
+            }
+            _ = sigint.recv() => {
+                info!("received SIGINT, shutting down");
+                break;
+            }
+        }
 
-    // time::sleep(Duration::from_secs(3)).await;
+        let reading = match bt.relative_path_loss().await {
+            Ok(rpl) => Reading::Rpl(rpl),
+            Err(e) => {
+                warn!("BT poll failed: {e}");
+                Reading::ConnectionLost
+            }
+        };
 
-    // loop {
-    //     interval.tick().await;
+        let was_disconnected = state.is_disconnected();
+        let action = state.transition(reading);
+        let is_disconnected = state.is_disconnected();
 
-    //     let now = Instant::now();
+        // Adjust poll rate when connection state changes
+        if was_disconnected != is_disconnected {
+            let target_ms = if is_disconnected {
+                DISCONNECT_POLL_INTERVAL_MS
+            } else {
+                POLL_INTERVAL_MS
+            };
+            interval = time::interval(Duration::from_millis(target_ms));
+        }
 
-    //     match bt_mgmt.relative_path_loss().await {
-    //         Ok(rpl) => {
-    //             let output = format!(
-    //                 "{}: Current RPL: {} ",
-    //                 chrono::Local::now().format("%H:%M:%S%.3f"),
-    //                 rpl
-    //             );
-    //             println!(
-    //                 "{}",
-    //                 if rpl >= 15.0 {
-    //                     output.red()
-    //                 } else {
-    //                     output.green()
-    //                 }
-    //             );
-    //         }
-    //         Err(e) => {
-    //             eprintln!("Con Info Error: {}", e);
-    //         }
-    //     }
+        match action {
+            Action::Lock => {
+                if let Err(e) = session.lock().await {
+                    error!("lock failed: {e}");
+                }
+            }
+            Action::Unlock => {
+                if let Err(e) = wake_screen(WAKE_DURATION).await {
+                    error!("wake failed: {e}");
+                }
+                if let Err(e) = session.unlock().await {
+                    error!("unlock failed: {e}");
+                }
+            }
+            Action::None => {}
+        }
+    }
 
-    //     println!("elapsed: {:?} ", now.elapsed());
-    // }
-
+    info!("daemon stopped");
     Ok(())
 }
 
-pub fn init_tracing() {
+fn init_tracing() {
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))

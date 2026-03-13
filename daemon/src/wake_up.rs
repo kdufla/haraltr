@@ -9,6 +9,15 @@ use crate::input::{VirtualKeyboard, VirtualMouse};
 const MOUSE_INTERVAL: Duration = Duration::from_millis(250);
 const ENTER_INTERVAL: Duration = Duration::from_millis(3000);
 
+pub async fn wake_screen(duration: Duration) -> Result<(), Box<dyn std::error::Error>> {
+    let (tx, rx) = oneshot::channel();
+    tokio::spawn(async move {
+        time::sleep(duration).await;
+        let _ = tx.send(());
+    });
+    wake_up(rx).await
+}
+
 pub async fn wake_up(
     mut shutdown: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {

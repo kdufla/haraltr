@@ -4,6 +4,7 @@ set -euo pipefail
 BINARY_NAME="daemon"
 BINARY_PATH="$(pwd)/target/debug/$BINARY_NAME"
 UNIT="bt-proximity-dev"
+LOG_LEVEL="${1:-${RUST_LOG:-info}}"
 
 echo "building"
 cargo build
@@ -24,7 +25,7 @@ START=$(date "+%Y-%m-%d %H:%M:%S")
 sudo systemd-run \
     --system \
     --unit="$UNIT" \
-    -E RUST_LOG="${RUST_LOG:-info}" \
+    -E RUST_LOG="$LOG_LEVEL" \
     "$BINARY_PATH"
 
 echo "following journal (Ctrl+C to stop)"

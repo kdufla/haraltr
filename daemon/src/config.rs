@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::info;
 use xdg::BaseDirectories;
 
 #[derive(Debug)]
@@ -70,7 +71,7 @@ impl Default for DisconnectActionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BluetoothConfig {
-    #[serde(default = "default_target_mac")]
+    #[serde(default)]
     pub target_mac: Option<String>,
     #[serde(default)]
     pub adapter_index: u16,
@@ -85,23 +86,12 @@ pub struct BluetoothConfig {
 impl Default for BluetoothConfig {
     fn default() -> Self {
         Self {
-            target_mac: default_target_mac(),
+            target_mac: None,
             adapter_index: 0,
             address_type: AddressTypeConfig::default(),
             poll_interval_ms: default_poll_interval_ms(),
             disconnect_poll_interval_ms: default_disconnect_poll_interval_ms(),
         }
-    }
-}
-
-fn default_target_mac() -> Option<String> {
-    #[cfg(debug_assertions)]
-    {
-        std::env::var("TARGET_MAC").ok()
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        None
     }
 }
 
@@ -218,17 +208,12 @@ impl Config {
         Ok(config)
     }
 
-    pub fn load_or_default(path: &Path) -> Self {
-        match Self::load_from_file(path) {
-            Ok(config) => config,
-            Err(e) => {
-                eprintln!(
-                    "warning: failed to load config from {}: {e}, using defaults",
-                    path.display()
-                );
-                Config::default()
-            }
-        }
+    pub fn load() -> Result<Self, ConfigError> {
+        let path = ensure_config_file()?;
+        info!("loading config from {}", path.display());
+        let contents = fs::read_to_string(&path)?;
+        let config: Config = toml::from_str(&contents)?;
+        Ok(config)
     }
 
     pub fn save_to_file(&self, path: &Path) -> Result<(), ConfigError> {
@@ -241,7 +226,7 @@ impl Config {
     }
 }
 
-pub fn resolve_config_path() -> Result<PathBuf, ConfigError> {
+fn ensure_config_file() -> Result<PathBuf, ConfigError> {
     #[cfg(debug_assertions)]
     {
         let local = PathBuf::from("config.toml");

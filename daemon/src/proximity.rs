@@ -1,4 +1,4 @@
-use common::config::{DisconnectActionConfig, ProximityConfig};
+use crate::config::{DisconnectActionConfig, ProximityConfig};
 use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy, PartialEq)]

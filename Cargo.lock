@@ -362,11 +362,6 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.1.0"
-dependencies = [
- "serde",
- "toml",
- "xdg",
-]
 
 [[package]]
 name = "concurrent-queue"
@@ -422,14 +417,15 @@ dependencies = [
  "btmgmt-packet",
  "chrono",
  "colored",
- "common",
  "evdev",
  "futures",
  "libc",
  "serde",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
+ "xdg",
  "zbus",
 ]
 

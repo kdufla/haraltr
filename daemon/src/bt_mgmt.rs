@@ -1,7 +1,7 @@
 use btmgmt::command::GetConnectionInformation;
 use btmgmt::{Client, client::Result};
 use btmgmt_packet::{Address, AddressType};
-use common::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
+use crate::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
 use tracing::{debug, trace};
 
 use crate::kalman::KalmanFilter;

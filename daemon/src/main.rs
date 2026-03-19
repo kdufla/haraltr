@@ -1,4 +1,5 @@
 mod bt_mgmt;
+mod config;
 mod input;
 mod kalman;
 mod proximity;
@@ -6,7 +7,7 @@ mod session;
 mod wake_up;
 
 use arc_swap::ArcSwap;
-use common::config::{self, Config};
+use crate::config::Config;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{SignalKind, signal};
@@ -23,9 +24,7 @@ use crate::wake_up::wake_screen;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    let config_path = config::resolve_config_path()?;
-    info!("using config at {}", config_path.display());
-    let config = Config::load_or_default(&config_path);
+    let config = Config::load()?;
 
     if config.bluetooth.target_mac.is_none() {
         warn!("target_mac is not set — waiting for config reload via SIGHUP");
@@ -58,7 +57,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::select! {
                 _ = sigterm.recv() => break 'daemon,
                 _ = sigint.recv() => break 'daemon,
-                _ = sighup.recv() => { reload_config(&config); }
+                _ = sighup.recv() => {
+                    info!("received SIGHUP, reloading config");
+                    match Config::load() {
+                        Ok(new_cfg) => config.store(Arc::new(new_cfg)),
+                        Err(e) => error!("failed to reload config: {e}"),
+                    }
+                }
             }
         }
 
@@ -78,7 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = sigterm.recv() => break 'daemon,
                 _ = sigint.recv() => break 'daemon,
                 _ = sighup.recv() => {
-                    reload_config(&config);
+                    info!("received SIGHUP, reloading config");
+                    match Config::load() {
+                        Ok(new_cfg) => config.store(Arc::new(new_cfg)),
+                        Err(e) => error!("failed to reload config: {e}"),
+                    }
                     break;
                 }
             }
@@ -133,34 +142,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn reload_config(config: &ArcSwap<Config>) {
-    info!("received SIGHUP, reloading config");
-    let path = match config::resolve_config_path() {
-        Ok(p) => p,
-        Err(e) => {
-            error!("failed to resolve config path: {e}");
-            return;
-        }
-    };
-    match Config::load_from_file(&path) {
-        Ok(new_cfg) => {
-            info!(
-                target_mac = new_cfg
-                    .bluetooth
-                    .target_mac
-                    .as_deref()
-                    .unwrap_or("<not set>"),
-                poll_ms = new_cfg.bluetooth.poll_interval_ms,
-                rpl_threshold = new_cfg.proximity.rpl_threshold,
-                "config reloaded"
-            );
-            config.store(Arc::new(new_cfg));
-        }
-        Err(e) => {
-            error!("failed to reload config: {e}");
-        }
-    }
-}
 
 fn init_tracing() {
     tracing_subscriber::registry()

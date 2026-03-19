@@ -1,6 +1,7 @@
 use btmgmt::command::GetConnectionInformation;
 use btmgmt::{Client, client::Result};
 use btmgmt_packet::{Address, AddressType};
+use common::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
 use tracing::{debug, trace};
 
 use crate::kalman::KalmanFilter;
@@ -14,13 +15,30 @@ pub struct BtMgmt {
 }
 
 impl BtMgmt {
-    pub fn new(target_mac: Address) -> Result<Self> {
+    pub fn new(bt_config: &BluetoothConfig, prox_config: &ProximityConfig) -> Result<Self> {
+        let target_mac: Address = bt_config
+            .target_mac
+            .as_deref()
+            .expect("target_mac must be set")
+            .parse::<bdaddr::Address>()
+            .expect("invalid target MAC address")
+            .into();
+
+        let addr_type = match bt_config.address_type {
+            AddressTypeConfig::BrEdr => AddressType::BrEdr,
+            AddressTypeConfig::LePublic => AddressType::LePublic,
+        };
+
         Ok(Self {
             client: Client::open()?,
-            adapter_index: 0,
+            adapter_index: bt_config.adapter_index,
             target_mac,
-            addr_type: AddressType::BrEdr,
-            denoise_filter: KalmanFilter::new(5.0),
+            addr_type,
+            denoise_filter: KalmanFilter::new(
+                prox_config.kalman_initial,
+                prox_config.kalman_q,
+                prox_config.kalman_r,
+            ),
         })
     }
 

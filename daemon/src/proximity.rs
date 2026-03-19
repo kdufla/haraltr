@@ -1,8 +1,5 @@
+use common::config::{DisconnectActionConfig, ProximityConfig};
 use tracing::{debug, info};
-
-const RPL_THRESHOLD: f64 = 15.0;
-const LOCK_COUNT: u32 = 5;
-const UNLOCK_COUNT: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
@@ -24,17 +21,33 @@ pub enum Action {
     None,
 }
 
+impl From<DisconnectActionConfig> for Action {
+    fn from(config: DisconnectActionConfig) -> Self {
+        match config {
+            DisconnectActionConfig::Lock => Action::Lock,
+            DisconnectActionConfig::Unlock => Action::Unlock,
+            DisconnectActionConfig::None => Action::None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct State {
     phase: Phase,
-    pub disconnect_action: Action,
+    disconnect_action: Action,
+    rpl_threshold: f64,
+    lock_count: u32,
+    unlock_count: u32,
 }
 
 impl State {
-    pub fn new(disconnect_action: Action) -> Self {
+    pub fn new(config: &ProximityConfig) -> Self {
         Self {
             phase: Phase::Near { consecutive_far: 0 },
-            disconnect_action,
+            disconnect_action: config.disconnect_action.into(),
+            rpl_threshold: config.rpl_threshold,
+            lock_count: config.lock_count,
+            unlock_count: config.unlock_count,
         }
     }
 
@@ -45,7 +58,7 @@ impl State {
     pub fn transition(&mut self, reading: Reading) -> Action {
         match reading {
             Reading::Rpl(rpl) => {
-                let is_far = rpl >= RPL_THRESHOLD;
+                let is_far = rpl >= self.rpl_threshold;
                 debug!(rpl, is_far, ?self.phase, "evaluating reading");
                 self.handle_rpl(rpl, is_far)
             }
@@ -69,10 +82,10 @@ impl State {
                     *consecutive_far += 1;
                     debug!(
                         consecutive_far = *consecutive_far,
-                        required = LOCK_COUNT,
+                        required = self.lock_count,
                         "far reading while near"
                     );
-                    if *consecutive_far >= LOCK_COUNT {
+                    if *consecutive_far >= self.lock_count {
                         info!(rpl, "near -> far, locking");
                         self.phase = Phase::Far {
                             consecutive_near: 0,
@@ -91,10 +104,10 @@ impl State {
                     *consecutive_near += 1;
                     debug!(
                         consecutive_near = *consecutive_near,
-                        required = UNLOCK_COUNT,
+                        required = self.unlock_count,
                         "near reading while far"
                     );
-                    if *consecutive_near >= UNLOCK_COUNT {
+                    if *consecutive_near >= self.unlock_count {
                         info!(rpl, "far -> near, unlocking");
                         self.phase = Phase::Near { consecutive_far: 0 };
                         Action::Unlock
@@ -127,11 +140,38 @@ impl State {
 mod tests {
     use super::*;
 
+    const RPL_THRESHOLD: f64 = 15.0;
+    const LOCK_COUNT: u32 = 5;
+    const UNLOCK_COUNT: u32 = 5;
     const FAR_RPL: f64 = RPL_THRESHOLD + 1.0;
     const NEAR_RPL: f64 = RPL_THRESHOLD - 1.0;
 
+    fn test_config(disconnect_action: DisconnectActionConfig) -> ProximityConfig {
+        ProximityConfig {
+            rpl_threshold: 15.0,
+            lock_count: 5,
+            unlock_count: 5,
+            disconnect_action,
+            ..ProximityConfig::default()
+        }
+    }
+
     fn new_lock_on_disconnect() -> State {
-        State::new(Action::Lock)
+        State::new(&test_config(DisconnectActionConfig::Lock))
+    }
+
+    fn new_far_state(disconnect_action: DisconnectActionConfig) -> State {
+        let mut s = State::new(&test_config(disconnect_action));
+        s.phase = Phase::Far {
+            consecutive_near: 0,
+        };
+        s
+    }
+
+    fn new_disconnected_state() -> State {
+        let mut s = State::new(&test_config(DisconnectActionConfig::Lock));
+        s.phase = Phase::Disconnected;
+        s
     }
 
     #[test]
@@ -168,12 +208,7 @@ mod tests {
 
     #[test]
     fn unlocks_after_consecutive_near_readings() {
-        let mut s = State {
-            phase: Phase::Far {
-                consecutive_near: 0,
-            },
-            disconnect_action: Action::Lock,
-        };
+        let mut s = new_far_state(DisconnectActionConfig::Lock);
         for _ in 0..UNLOCK_COUNT - 1 {
             assert_eq!(s.transition(Reading::Rpl(NEAR_RPL)), Action::None);
         }
@@ -183,46 +218,35 @@ mod tests {
 
     #[test]
     fn connection_lost_from_near_locks() {
-        let mut s = State {
-            phase: Phase::Near { consecutive_far: 0 },
-            disconnect_action: Action::Lock,
-        };
+        let mut s = new_lock_on_disconnect();
         assert_eq!(s.transition(Reading::ConnectionLost), Action::Lock);
         assert!(s.is_disconnected());
     }
 
     #[test]
     fn connection_lost_from_far_no_duplicate_action() {
-        let mut s = State {
-            phase: Phase::Far {
-                consecutive_near: 0,
-            },
-            disconnect_action: Action::Lock,
-        };
+        let mut s = new_far_state(DisconnectActionConfig::Lock);
         assert_eq!(s.transition(Reading::ConnectionLost), Action::Lock);
         assert_eq!(s.transition(Reading::ConnectionLost), Action::None);
     }
 
     #[test]
     fn connection_lost_nothing_action() {
-        let mut s = State::new(Action::None);
+        let mut s = State::new(&test_config(DisconnectActionConfig::None));
         assert_eq!(s.transition(Reading::ConnectionLost), Action::None);
         assert!(s.is_disconnected());
     }
 
     #[test]
     fn connection_lost_unlock_action() {
-        let mut s = State::new(Action::Unlock);
+        let mut s = State::new(&test_config(DisconnectActionConfig::Unlock));
         assert_eq!(s.transition(Reading::ConnectionLost), Action::Unlock);
         assert!(s.is_disconnected());
     }
 
     #[test]
     fn reconnect_does_not_immediately_unlock() {
-        let mut s = State {
-            phase: Phase::Disconnected,
-            disconnect_action: Action::Lock,
-        };
+        let mut s = new_disconnected_state();
         assert_eq!(s.transition(Reading::Rpl(5.0)), Action::None);
         assert!(matches!(
             s.phase,
@@ -234,10 +258,7 @@ mod tests {
 
     #[test]
     fn reconnect_far_stays_far() {
-        let mut s = State {
-            phase: Phase::Disconnected,
-            disconnect_action: Action::Lock,
-        };
+        let mut s = new_disconnected_state();
         assert_eq!(s.transition(Reading::Rpl(20.0)), Action::None);
         assert!(matches!(
             s.phase,

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arc-swap = "1"
 bdaddr = "0.1.2"
 bluer = { version = "0.17", features = ["full"] }
 btmgmt = "0.2.5"

@@ -6,26 +6,29 @@ use tracing::{debug, info, warn};
 
 use crate::input::{VirtualKeyboard, VirtualMouse};
 
-const MOUSE_INTERVAL: Duration = Duration::from_millis(250);
-const ENTER_INTERVAL: Duration = Duration::from_millis(3000);
-
-pub async fn wake_screen(duration: Duration) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn wake_screen(
+    duration: Duration,
+    mouse_interval: Duration,
+    enter_interval: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = oneshot::channel();
     tokio::spawn(async move {
         time::sleep(duration).await;
         let _ = tx.send(());
     });
-    wake_up(rx).await
+    wake_up(rx, mouse_interval, enter_interval).await
 }
 
 pub async fn wake_up(
     mut shutdown: oneshot::Receiver<()>,
+    mouse_interval: Duration,
+    enter_interval: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut keyboard = VirtualKeyboard::new()?;
     let mut mouse = VirtualMouse::new()?;
 
-    let mut mouse_tick = time::interval(MOUSE_INTERVAL);
-    let mut enter_tick = time::interval(ENTER_INTERVAL);
+    let mut mouse_tick = time::interval(mouse_interval);
+    let mut enter_tick = time::interval(enter_interval);
     let _skip_first_enter = enter_tick.tick().await;
 
     loop {

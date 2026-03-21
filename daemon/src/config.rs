@@ -191,6 +191,34 @@ fn default_enter_interval_ms() -> u64 {
     3000
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebConfig {
+    #[serde(default = "default_web_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_web_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub password_hash: Option<String>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_web_enabled(),
+            port: default_web_port(),
+            password_hash: None,
+        }
+    }
+}
+
+fn default_web_enabled() -> bool {
+    true
+}
+
+fn default_web_port() -> u16 {
+    7878
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -199,15 +227,11 @@ pub struct Config {
     pub proximity: ProximityConfig,
     #[serde(default)]
     pub wake: WakeConfig,
+    #[serde(default)]
+    pub web: WebConfig,
 }
 
 impl Config {
-    pub fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
-        let contents = fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&contents)?;
-        Ok(config)
-    }
-
     pub fn load() -> Result<Self, ConfigError> {
         let path = ensure_config_file()?;
         info!("loading config from {}", path.display());
@@ -216,12 +240,24 @@ impl Config {
         Ok(config)
     }
 
+    pub fn save(&self) -> Result<(), ConfigError> {
+        let path = ensure_config_file()?;
+        self.save_to_file(&path)
+    }
+
     pub fn save_to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let contents = toml::to_string_pretty(self)?;
         let dir = path.parent().unwrap_or(Path::new("."));
         let tmp_path = dir.join(".config.toml.tmp");
         fs::write(&tmp_path, &contents)?;
         fs::rename(&tmp_path, path)?;
+
+        #[cfg(not(debug_assertions))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+
         Ok(())
     }
 }
@@ -319,7 +355,9 @@ rpl_threshold = 20.0
         config.proximity.rpl_threshold = 25.0;
 
         config.save_to_file(&path).unwrap();
-        let loaded = Config::load_from_file(&path).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let loaded: Config = toml::from_str(&contents).unwrap();
 
         assert_eq!(
             loaded.bluetooth.target_mac.as_deref(),
@@ -343,7 +381,43 @@ disconnect_action = "unlock"
         assert_eq!(config.bluetooth.address_type, AddressTypeConfig::LePublic);
         assert_eq!(
             config.proximity.disconnect_action,
-            DisconnectActionConfig::Unlock
+            DisconnectActionConfig::Unlock,
         );
+    }
+
+    #[test]
+    fn web_config_defaults_when_missing() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.web.enabled);
+        assert_eq!(config.web.port, 7878);
+        assert!(config.web.password_hash.is_none());
+    }
+
+    #[test]
+    fn web_config_round_trip() {
+        let mut config = Config::default();
+        config.web.enabled = false;
+        config.web.port = 9090;
+        config.web.password_hash = Some("$argon2id$v=19$test".to_string());
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+
+        assert!(!deserialized.web.enabled);
+        assert_eq!(deserialized.web.port, 9090);
+        assert_eq!(
+            deserialized.web.password_hash.as_deref(),
+            Some("$argon2id$v=19$test"),
+        );
+    }
+
+    #[test]
+    fn web_config_password_hash_none_round_trip() {
+        let config = Config::default();
+        assert!(config.web.password_hash.is_none());
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert!(deserialized.web.password_hash.is_none());
     }
 }

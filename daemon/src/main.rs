@@ -2,6 +2,7 @@ mod bt_mgmt;
 mod config;
 mod input;
 mod kalman;
+mod passwd;
 mod proximity;
 mod session;
 mod wake_up;
@@ -22,6 +23,11 @@ use crate::wake_up::wake_screen;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("passwd") {
+        return passwd::set_password();
+    }
+
     init_tracing();
 
     let config = Config::load()?;

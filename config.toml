@@ -1,8 +1,7 @@
 [bluetooth]
-# MAC is required
 target_mac = "AA:BB:CC:DD:EE:FF"
 adapter_index = 0
-address_type = "br_edr"            # "br_edr", "le_public"
+address_type = "br_edr"
 poll_interval_ms = 2000
 disconnect_poll_interval_ms = 5000
 
@@ -13,9 +12,13 @@ unlock_count = 5
 kalman_q = 0.1
 kalman_r = 3.0
 kalman_initial = 5.0
-disconnect_action = "lock" # "lock", "unlock", "none"
+disconnect_action = "lock"
 
 [wake]
 duration_secs = 3
 mouse_interval_ms = 250
 enter_interval_ms = 3000
+
+[web]
+enabled = true
+port = 7878

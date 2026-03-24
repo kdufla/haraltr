@@ -6,9 +6,10 @@ mod passwd;
 mod proximity;
 mod session;
 mod wake_up;
+mod web;
 
-use arc_swap::ArcSwap;
 use crate::config::Config;
+use arc_swap::ArcSwap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{SignalKind, signal};
@@ -147,7 +148,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("daemon stopped");
     Ok(())
 }
-
 
 fn init_tracing() {
     tracing_subscriber::registry()

@@ -20,13 +20,25 @@ pub struct DaemonStatus {
     pub started_at: Instant,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProximityPhase {
     Near,
     Far,
     Disconnected,
 }
 
+impl std::fmt::Display for ProximityPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Near => write!(f, "near"),
+            Self::Far => write!(f, "far"),
+            Self::Disconnected => write!(f, "disconnected"),
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct RplReading {
     pub timestamp: f64,
     pub rpl: f64,

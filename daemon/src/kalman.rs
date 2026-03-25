@@ -23,7 +23,7 @@ impl KalmanFilter {
         self.x
     }
 
-    pub fn _update_params(&mut self, q: f64, r: f64) {
+    pub fn update_params(&mut self, q: f64, r: f64) {
         self.q = q;
         self.r = r;
     }

@@ -538,6 +538,7 @@ dependencies = [
  "evdev",
  "futures",
  "hex",
+ "http-body-util",
  "libc",
  "rand",
  "rpassword",

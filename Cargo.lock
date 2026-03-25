@@ -534,6 +534,7 @@ dependencies = [
  "btmgmt-packet",
  "chrono",
  "colored",
+ "cookie",
  "evdev",
  "futures",
  "hex",

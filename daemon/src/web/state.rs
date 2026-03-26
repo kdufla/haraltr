@@ -45,7 +45,7 @@ pub struct RplReading {
     pub raw_rpl: f64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RplUpdate {
     pub rpl: f64,
     pub raw_rpl: f64,

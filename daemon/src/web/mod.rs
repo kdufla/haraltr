@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod sse;
 pub mod state;
 
 pub use state::AppState;
@@ -18,6 +19,7 @@ use api::{
     put_config_handler, remove_device_handler, status_handler,
 };
 use auth::{AuthUser, login_handler, logout_handler};
+use sse::sse_handler;
 
 #[allow(dead_code)]
 pub async fn serve(state: Arc<AppState>) {
@@ -36,6 +38,7 @@ pub async fn serve(state: Arc<AppState>) {
                 .post(add_device_handler)
                 .delete(remove_device_handler),
         )
+        .route("/api/events", get(sse_handler))
         .route("/api/logout", post(logout_handler))
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(
             state.clone(),

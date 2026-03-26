@@ -68,7 +68,6 @@ fn is_valid_mac(mac: &str) -> bool {
             .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-#[allow(dead_code)]
 pub async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let status = state.daemon_status.load();
     let uptime = status.started_at.elapsed().as_secs();
@@ -82,13 +81,11 @@ pub async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-#[allow(dead_code)]
 pub async fn get_config_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(config_response(&config))
 }
 
-#[allow(dead_code)]
 pub async fn put_config_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
@@ -124,13 +121,19 @@ pub async fn put_config_handler(
             .into_response();
     }
 
+    let old_mac = current.bluetooth.target_mac.clone();
+    let mac_changed = old_mac != new_config.bluetooth.target_mac;
+
     let response = config_response(&new_config);
     state.config.store(Arc::new(new_config));
+
+    if mac_changed {
+        state.config_notify.notify_one();
+    }
 
     Json(response).into_response()
 }
 
-#[allow(dead_code)]
 pub async fn history_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let history = state.history.lock().unwrap();
     let readings: Vec<Value> = history
@@ -146,7 +149,6 @@ pub async fn history_handler(State(state): State<Arc<AppState>>) -> Json<Value> 
     Json(json!({"readings": readings}))
 }
 
-#[allow(dead_code)]
 pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(json!({
@@ -155,7 +157,6 @@ pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Val
     }))
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct DeviceRequest {
     target_mac: String,
@@ -163,7 +164,6 @@ pub struct DeviceRequest {
     address_type: Option<AddressTypeConfig>,
 }
 
-#[allow(dead_code)]
 pub async fn add_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeviceRequest>,
@@ -192,11 +192,11 @@ pub async fn add_device_handler(
     }
 
     state.config.store(Arc::new(new_config));
+    state.config_notify.notify_one();
 
     Json(json!({"ok": true})).into_response()
 }
 
-#[allow(dead_code)]
 pub async fn remove_device_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let current = state.config.load();
     let mut new_config = current.as_ref().clone();
@@ -211,6 +211,7 @@ pub async fn remove_device_handler(State(state): State<Arc<AppState>>) -> impl I
     }
 
     state.config.store(Arc::new(new_config));
+    state.config_notify.notify_one();
 
     Json(json!({"ok": true})).into_response()
 }
@@ -250,6 +251,7 @@ mod tests {
                 started_at: Instant::now(),
             }),
             history: std::sync::Mutex::new(VecDeque::new()),
+            config_notify: tokio::sync::Notify::new(),
         })
     }
 

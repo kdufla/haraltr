@@ -10,9 +10,11 @@ mod web;
 
 use crate::config::Config;
 use arc_swap::ArcSwap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::broadcast;
 use tokio::time;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -21,6 +23,9 @@ use crate::bt_mgmt::BtMgmt;
 use crate::proximity::{Action, Reading, State};
 use crate::session::SessionController;
 use crate::wake_up::wake_screen;
+use crate::web::{AppState, DaemonStatus, ProximityPhase, RplReading, RplUpdate};
+
+const HISTORY_CAPACITY: usize = 300;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
     let config = Config::load()?;
+    let config_path = config::config_path()?;
 
     if config.bluetooth.target_mac.is_none() {
         warn!("target_mac is not set — waiting for config reload via SIGHUP");
@@ -49,6 +55,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let config = Arc::new(ArcSwap::from_pointee(config));
+    let daemon_start = Instant::now();
+
+    let (rpl_tx, _) = broadcast::channel::<RplUpdate>(32);
+    let app_state = Arc::new(AppState {
+        config: config.clone(),
+        config_path: config_path.clone(),
+        sessions: std::sync::Mutex::new(HashMap::new()),
+        rpl_broadcast: rpl_tx,
+        daemon_status: ArcSwap::from_pointee(DaemonStatus {
+            rpl: None,
+            raw_rpl: None,
+            state: ProximityPhase::Disconnected,
+            connected: false,
+            target_mac: config.load().bluetooth.target_mac.clone(),
+            started_at: daemon_start,
+        }),
+        history: std::sync::Mutex::new(VecDeque::with_capacity(HISTORY_CAPACITY)),
+        config_notify: tokio::sync::Notify::new(),
+    });
+
+    spawn_web_server(&app_state);
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
@@ -71,18 +98,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Err(e) => error!("failed to reload config: {e}"),
                     }
                 }
+                _ = app_state.config_notify.notified() => {
+                    info!("config changed via web UI");
+                }
             }
         }
 
         let cfg = config.load();
-        info!(
-            "monitoring {}",
-            cfg.bluetooth.target_mac.as_deref().unwrap()
-        );
+        let target_mac = cfg.bluetooth.target_mac.clone().unwrap();
+        info!("monitoring {target_mac}");
 
         let mut bt = BtMgmt::new(&cfg.bluetooth, &cfg.proximity)?;
         let mut state = State::new(&cfg.proximity);
         let mut interval = time::interval(Duration::from_millis(cfg.bluetooth.poll_interval_ms));
+        let mut prev_kalman_q = cfg.proximity.kalman_q;
+        let mut prev_kalman_r = cfg.proximity.kalman_r;
 
         loop {
             tokio::select! {
@@ -97,12 +127,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     break;
                 }
+                _ = app_state.config_notify.notified() => {
+                    info!("config changed via web UI, restarting monitor loop");
+                    break;
+                }
             }
 
+            let cfg = config.load();
+            if cfg.proximity.kalman_q != prev_kalman_q || cfg.proximity.kalman_r != prev_kalman_r {
+                info!(
+                    kalman_q = cfg.proximity.kalman_q,
+                    kalman_r = cfg.proximity.kalman_r,
+                    "kalman parameters updated"
+                );
+                bt.update_kalman_params(cfg.proximity.kalman_q, cfg.proximity.kalman_r);
+                prev_kalman_q = cfg.proximity.kalman_q;
+                prev_kalman_r = cfg.proximity.kalman_r;
+            }
+
+            let now_secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64();
+
             let reading = match bt.relative_path_loss().await {
-                Ok(rpl) => Reading::Rpl(rpl),
+                Ok((filtered_rpl, raw_rpl)) => {
+                    // broadcast to SSE clients
+                    let _ = app_state.rpl_broadcast.send(RplUpdate {
+                        rpl: filtered_rpl,
+                        raw_rpl,
+                        state: state.proximity_phase().to_string(),
+                        connected: true,
+                        timestamp: now_secs,
+                    });
+
+                    // push to history
+                    {
+                        let mut history = app_state.history.lock().unwrap();
+                        if history.len() >= HISTORY_CAPACITY {
+                            history.pop_front();
+                        }
+                        history.push_back(RplReading {
+                            timestamp: now_secs,
+                            rpl: filtered_rpl,
+                            raw_rpl,
+                        });
+                    }
+
+                    // update daemon status
+                    app_state.daemon_status.store(Arc::new(DaemonStatus {
+                        rpl: Some(filtered_rpl),
+                        raw_rpl: Some(raw_rpl),
+                        state: state.proximity_phase(),
+                        connected: true,
+                        target_mac: Some(target_mac.clone()),
+                        started_at: daemon_start,
+                    }));
+
+                    Reading::Rpl(filtered_rpl)
+                }
                 Err(e) => {
                     warn!("BT poll failed: {e}");
+
+                    // update daemon status to disconnected
+                    app_state.daemon_status.store(Arc::new(DaemonStatus {
+                        rpl: None,
+                        raw_rpl: None,
+                        state: ProximityPhase::Disconnected,
+                        connected: false,
+                        target_mac: Some(target_mac.clone()),
+                        started_at: daemon_start,
+                    }));
+
                     Reading::ConnectionLost
                 }
             };
@@ -147,6 +243,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("daemon stopped");
     Ok(())
+}
+
+fn spawn_web_server(app_state: &Arc<AppState>) {
+    let cfg = app_state.config.load();
+
+    if !cfg.web.enabled {
+        info!("web server disabled in config");
+        return;
+    }
+
+    if cfg.web.password_hash.is_none() {
+        warn!("web UI enabled but no password set — run 'haraltr passwd'. web server disabled.");
+        return;
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::metadata(&app_state.config_path) {
+            Ok(meta) if meta.uid() != 0 => {
+                warn!(
+                    "config file not owned by root — web server disabled. \
+                    fix with: sudo chown root:root {}",
+                    app_state.config_path.display()
+                );
+                return;
+            }
+            Err(e) => {
+                warn!("cannot stat config file: {e} — web server disabled.");
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    let state = app_state.clone();
+    tokio::spawn(async move { web::serve(state).await });
 }
 
 fn init_tracing() {

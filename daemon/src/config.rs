@@ -262,6 +262,10 @@ impl Config {
     }
 }
 
+pub fn config_path() -> Result<PathBuf, ConfigError> {
+    ensure_config_file()
+}
+
 fn ensure_config_file() -> Result<PathBuf, ConfigError> {
     #[cfg(debug_assertions)]
     {

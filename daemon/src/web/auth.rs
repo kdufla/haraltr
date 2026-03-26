@@ -150,6 +150,7 @@ mod tests {
                 started_at: Instant::now(),
             }),
             history: std::sync::Mutex::new(VecDeque::new()),
+            config_notify: tokio::sync::Notify::new(),
         })
     }
 

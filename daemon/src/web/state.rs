@@ -61,6 +61,7 @@ pub struct AppState {
     pub rpl_broadcast: broadcast::Sender<RplUpdate>,
     pub daemon_status: ArcSwap<DaemonStatus>,
     pub history: std::sync::Mutex<VecDeque<RplReading>>,
+    pub config_notify: tokio::sync::Notify,
 }
 
 impl AppState {

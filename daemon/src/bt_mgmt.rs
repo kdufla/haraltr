@@ -42,12 +42,16 @@ impl BtMgmt {
         })
     }
 
-    pub async fn relative_path_loss(&mut self) -> Result<f64> {
+    pub async fn relative_path_loss(&mut self) -> Result<(f64, f64)> {
         let (rssi, tx_power) = self.get_connection_information().await?;
         let raw_rpl = tx_power as f64 - rssi as f64;
         let filtered_rpl = self.denoise_filter.update(raw_rpl);
         debug!(raw_rpl, filtered_rpl, "relative path loss");
-        Ok(filtered_rpl)
+        Ok((filtered_rpl, raw_rpl))
+    }
+
+    pub fn update_kalman_params(&mut self, q: f64, r: f64) {
+        self.denoise_filter.update_params(q, r);
     }
 
     async fn get_connection_information(&self) -> Result<(i8, i8)> {

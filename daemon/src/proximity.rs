@@ -55,6 +55,14 @@ impl State {
         matches!(self.phase, Phase::Disconnected)
     }
 
+    pub fn proximity_phase(&self) -> crate::web::ProximityPhase {
+        match self.phase {
+            Phase::Near { .. } => crate::web::ProximityPhase::Near,
+            Phase::Far { .. } => crate::web::ProximityPhase::Far,
+            Phase::Disconnected => crate::web::ProximityPhase::Disconnected,
+        }
+    }
+
     pub fn transition(&mut self, reading: Reading) -> Action {
         match reading {
             Reading::Rpl(rpl) => {

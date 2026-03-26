@@ -4,8 +4,7 @@ pub mod sse;
 pub mod state;
 
 pub use state::AppState;
-#[cfg(test)]
-pub use state::{DaemonStatus, ProximityPhase};
+pub use state::{DaemonStatus, ProximityPhase, RplReading, RplUpdate};
 
 use std::sync::Arc;
 
@@ -21,7 +20,6 @@ use api::{
 use auth::{AuthUser, login_handler, logout_handler};
 use sse::sse_handler;
 
-#[allow(dead_code)]
 pub async fn serve(state: Arc<AppState>) {
     let public = Router::new().route("/api/login", post(login_handler));
 

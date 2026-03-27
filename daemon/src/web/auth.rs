@@ -126,21 +126,18 @@ mod tests {
     use axum::http::Request;
     use axum::middleware;
     use axum::routing::post;
-    use std::collections::{HashMap, VecDeque};
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
-    use tokio::sync::broadcast;
     use tower::ServiceExt;
 
     fn test_state(password_hash: Option<String>) -> Arc<AppState> {
         let mut config = Config::default();
         config.web.password_hash = password_hash;
-        let (tx, _) = broadcast::channel(16);
         Arc::new(AppState {
             config: Arc::new(ArcSwap::from_pointee(config)),
             config_path: PathBuf::from("/tmp/test-config.toml"),
             sessions: std::sync::Mutex::new(HashMap::new()),
-            rpl_broadcast: tx,
             daemon_status: ArcSwap::from_pointee(crate::web::DaemonStatus {
                 rpl: None,
                 raw_rpl: None,
@@ -149,7 +146,6 @@ mod tests {
                 target_mac: None,
                 started_at: Instant::now(),
             }),
-            history: std::sync::Mutex::new(VecDeque::new()),
             config_notify: tokio::sync::Notify::new(),
         })
     }

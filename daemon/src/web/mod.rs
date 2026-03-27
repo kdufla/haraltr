@@ -1,10 +1,9 @@
 pub mod api;
 pub mod auth;
-pub mod sse;
 pub mod state;
 
 pub use state::AppState;
-pub use state::{DaemonStatus, ProximityPhase, RplReading, RplUpdate};
+pub use state::{DaemonStatus, ProximityPhase};
 
 use std::sync::Arc;
 
@@ -14,11 +13,10 @@ use axum::routing::{get, post};
 use tracing::info;
 
 use api::{
-    add_device_handler, get_config_handler, get_devices_handler, history_handler,
-    put_config_handler, remove_device_handler, status_handler,
+    add_device_handler, get_config_handler, get_devices_handler, put_config_handler,
+    remove_device_handler, status_handler,
 };
 use auth::{AuthUser, login_handler, logout_handler};
-use sse::sse_handler;
 
 pub async fn serve(state: Arc<AppState>) {
     let public = Router::new().route("/api/login", post(login_handler));
@@ -29,14 +27,12 @@ pub async fn serve(state: Arc<AppState>) {
             "/api/config",
             get(get_config_handler).put(put_config_handler),
         )
-        .route("/api/history", get(history_handler))
         .route(
             "/api/devices",
             get(get_devices_handler)
                 .post(add_device_handler)
                 .delete(remove_device_handler),
         )
-        .route("/api/events", get(sse_handler))
         .route("/api/logout", post(logout_handler))
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(
             state.clone(),

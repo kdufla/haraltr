@@ -134,21 +134,6 @@ pub async fn put_config_handler(
     Json(response).into_response()
 }
 
-pub async fn history_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let history = state.history.lock().unwrap();
-    let readings: Vec<Value> = history
-        .iter()
-        .map(|r| {
-            json!({
-                "timestamp": r.timestamp,
-                "rpl": r.rpl,
-                "raw_rpl": r.raw_rpl,
-            })
-        })
-        .collect();
-    Json(json!({"readings": readings}))
-}
-
 pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(json!({
@@ -221,7 +206,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::web::auth::{AuthUser, login_handler, logout_handler};
-    use crate::web::state::{AppState, DaemonStatus, ProximityPhase, RplReading};
+    use crate::web::state::{AppState, DaemonStatus, ProximityPhase};
     use arc_swap::ArcSwap;
     use axum::Router;
     use axum::body::Body;
@@ -229,19 +214,16 @@ mod tests {
     use axum::middleware;
     use axum::routing::{get, post};
     use http_body_util::BodyExt;
-    use std::collections::{HashMap, VecDeque};
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Instant;
-    use tokio::sync::broadcast;
     use tower::ServiceExt;
 
     fn test_state_with_config_path(config: Config, path: PathBuf) -> Arc<AppState> {
-        let (tx, _) = broadcast::channel(16);
         Arc::new(AppState {
             config: Arc::new(ArcSwap::from_pointee(config)),
             config_path: path,
             sessions: std::sync::Mutex::new(HashMap::new()),
-            rpl_broadcast: tx,
             daemon_status: ArcSwap::from_pointee(DaemonStatus {
                 rpl: Some(12.3),
                 raw_rpl: Some(14.1),
@@ -250,7 +232,6 @@ mod tests {
                 target_mac: Some("24:29:34:8E:0A:58".into()),
                 started_at: Instant::now(),
             }),
-            history: std::sync::Mutex::new(VecDeque::new()),
             config_notify: tokio::sync::Notify::new(),
         })
     }
@@ -268,7 +249,6 @@ mod tests {
                 "/api/config",
                 get(get_config_handler).put(put_config_handler),
             )
-            .route("/api/history", get(history_handler))
             .route(
                 "/api/devices",
                 get(get_devices_handler)
@@ -452,29 +432,6 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn history_returns_readings() {
-        let state = test_state();
-        state.history.lock().unwrap().push_back(RplReading {
-            timestamp: 1711000000.0,
-            rpl: 12.3,
-            raw_rpl: 14.1,
-        });
-        let token = state.create_session();
-        let app = test_router(state);
-
-        let resp = app
-            .oneshot(authed_get("/api/history", &token))
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        let json = body_json(resp).await;
-        let readings = json["readings"].as_array().unwrap();
-        assert_eq!(readings.len(), 1);
-        assert_eq!(readings[0]["rpl"], 12.3);
     }
 
     #[tokio::test]

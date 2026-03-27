@@ -269,7 +269,7 @@ pub fn config_path() -> Result<PathBuf, ConfigError> {
 fn ensure_config_file() -> Result<PathBuf, ConfigError> {
     #[cfg(debug_assertions)]
     {
-        let local = PathBuf::from("config.toml");
+        let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config.toml");
         if local.exists() {
             return Ok(local);
         }

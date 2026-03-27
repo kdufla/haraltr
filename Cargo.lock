@@ -539,6 +539,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "libc",
+ "mime_guess",
  "rand",
  "rpassword",
  "rust-embed",

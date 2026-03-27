@@ -17,6 +17,7 @@ cookie = "0.18.1"
 evdev = "0.13.2"
 hex = "0.4"
 libc = "0.2.180"
+mime_guess = "2.0.5"
 rand = "0.10"
 rpassword = "7"
 rust-embed = { version = "8", features = ["debug-embed"] }

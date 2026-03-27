@@ -12,7 +12,7 @@ unlock_count = 5
 kalman_q = 0.1
 kalman_r = 3.0
 kalman_initial = 5.0
-disconnect_action = "lock"
+disconnect_action = "none"
 
 [wake]
 duration_secs = 3

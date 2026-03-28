@@ -203,9 +203,65 @@ async function fetchStatus() {
     }
 }
 
+async function loadDevices() {
+    try {
+        const res = await authFetch("/api/bt-devices");
+        const data = await res.json();
+        const sel = document.getElementById("device-select");
+        sel.length = 1;
+        for (const dev of data.devices || []) {
+            const opt = document.createElement("option");
+            opt.value = dev.mac;
+            opt.textContent = dev.name + (dev.connected ? " [connected]" : "");
+            sel.appendChild(opt);
+        }
+    } catch (e) {
+        if (e.message !== "unauthorized") console.log(e);
+    }
+}
+
+async function loadCurrentTarget() {
+    try {
+        const res = await authFetch("/api/devices");
+        const data = await res.json();
+        document.getElementById("current-target").textContent =
+            data.target_mac ? "Current: " + data.target_mac : "No device selected";
+    } catch (e) {
+        if (e.message !== "unauthorized") console.log(e);
+    }
+}
+
+document.getElementById("device-select").addEventListener("change", async (e) => {
+    if (!e.target.value) return;
+    try {
+        await authFetch("/api/devices", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_mac: e.target.value }),
+        });
+        loadCurrentTarget();
+    } catch (e) {
+        if (e.message !== "unauthorized") console.log(e);
+    }
+});
+
+document.getElementById("clear-device-btn").addEventListener("click", async () => {
+    try {
+        await authFetch("/api/devices", { method: "DELETE" });
+        loadCurrentTarget();
+        document.getElementById("device-select").value = "";
+    } catch (e) {
+        if (e.message !== "unauthorized") console.log(e);
+    }
+});
+
+document.getElementById("refresh-devices-btn").addEventListener("click", loadDevices);
+
 // --- Init ---
 
 loadConfig();
+loadDevices();
+loadCurrentTarget();
 initChart();
 fetchStatus();
 setInterval(fetchStatus, 1000);

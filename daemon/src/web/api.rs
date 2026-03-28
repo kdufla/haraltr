@@ -7,7 +7,10 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::config::{AddressTypeConfig, Config};
+use crate::{
+    config::{AddressTypeConfig, Config},
+    web::bluez::list_devices,
+};
 
 use super::AppState;
 
@@ -140,6 +143,17 @@ pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Val
         "target_mac": config.bluetooth.target_mac,
         "address_type": config.bluetooth.address_type,
     }))
+}
+
+pub async fn bt_devices_handler() -> impl IntoResponse {
+    match list_devices().await {
+        Ok(devices) => Json(json!({ "devices": devices })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{e}"), "devices": []})),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(Deserialize)]

@@ -21,6 +21,18 @@
 
     <div id="config-page">
         <h2>Configuration</h2>
+        <fieldset>
+            <legend>Target Device</legend>
+            <label>Device
+                <select id="device-select">
+                    <option value="">— select —</option>
+                </select>
+            </label>
+            <span id="current-target">No device selected</span>
+            <button type="button" id="clear-device-btn">Clear</button>
+            <button type="button" id="refresh-devices-btn">Refresh</button>
+        </fieldset>
+
         <form id="config-form">
             <fieldset>
                 <legend>Bluetooth</legend>

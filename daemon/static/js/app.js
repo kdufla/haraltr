@@ -147,11 +147,55 @@ configForm.addEventListener("change", () => {
     debounceTimer = setTimeout(saveConfig, 500);
 });
 
+
+const CHART_LEN = 60;
+const chartData = [[], [], []]; // [timestamps, filtered RPL, raw RPL]
+let chart = null;
+const t0 = Date.now() / 1000;
+
+function initChart() {
+    const el = document.getElementById("rpl-chart");
+    const opts = {
+        width: el.clientWidth || 600,
+        height: 250,
+        series: [
+            {},
+            { label: "Filtered", stroke: "cyan", width: 2 },
+            { label: "Raw", stroke: "gray", width: 1, dash: [4, 4] },
+        ],
+        axes: [
+            { label: "Time (s)" },
+            { label: "RPL" },
+        ],
+    };
+    chart = new uPlot(opts, [[], [], []], el);
+}
+
 async function fetchStatus() {
     try {
         const res = await authFetch("/api/status");
         const data = await res.json();
-        void data;
+
+        // monitor text
+        document.getElementById("mon-mac").textContent = data.target_mac || "—";
+        document.getElementById("mon-state").textContent = data.state || "—";
+        document.getElementById("mon-connected").textContent = data.connected ? "yes" : "no";
+        document.getElementById("mon-rpl").textContent = data.rpl != null ? data.rpl.toFixed(1) : "—";
+
+        // chart data
+        chartData[0].push(Date.now() / 1000 - t0);
+        chartData[1].push(data.rpl ?? null);
+        chartData[2].push(data.raw_rpl ?? null);
+
+        if (chartData[0].length > CHART_LEN) {
+            chartData[0].shift();
+            chartData[1].shift();
+            chartData[2].shift();
+        }
+
+        if (chart) {
+            chart.setData(chartData);
+        }
     } catch (e) {
         if (e.message !== "unauthorized") {
             console.log(e);
@@ -159,6 +203,9 @@ async function fetchStatus() {
     }
 }
 
+// --- Init ---
+
 loadConfig();
+initChart();
 fetchStatus();
 setInterval(fetchStatus, 1000);

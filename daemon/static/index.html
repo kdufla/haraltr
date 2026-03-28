@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>haraltr</title>
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/uPlot.min.css">
 </head>
 
 <body>
@@ -93,9 +94,16 @@
 
     <div id="monitor-page" hidden>
         <h2>Monitor</h2>
-        <p>TODO</p>
+        <div id="monitor-info">
+            <span>Target: <span id="mon-mac">—</span></span>
+            <span>State: <span id="mon-state">—</span></span>
+            <span>Connected: <span id="mon-connected">—</span></span>
+            <span>RPL: <span id="mon-rpl">—</span></span>
+        </div>
+        <div id="rpl-chart"></div>
     </div>
 
+    <script src="/js/uPlot.iife.min.js"></script>
     <script src="/js/app.js"></script>
 </body>
 

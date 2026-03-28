@@ -33,8 +33,42 @@
             <button type="button" id="refresh-devices-btn">Refresh</button>
         </fieldset>
 
+        <label class="toggle">Advanced
+            <input type="checkbox" id="advanced-toggle">
+            <span class="slider"></span>
+        </label>
+
         <form id="config-form">
             <fieldset>
+                <legend>Proximity</legend>
+                <label>RPL threshold
+                    <input type="number" name="proximity.rpl_threshold" min="0.5" max="100" step="0.5">
+                </label>
+                <label>Disconnect action
+                    <select name="proximity.disconnect_action">
+                        <option value="lock">Lock</option>
+                        <option value="unlock">Unlock</option>
+                        <option value="none">None</option>
+                    </select>
+                </label>
+                <label>Lock count
+                    <input type="number" name="proximity.lock_count" min="1" max="100" step="1">
+                </label>
+                <label>Unlock count
+                    <input type="number" name="proximity.unlock_count" min="1" max="100" step="1">
+                </label>
+                <label class="advanced" hidden>Kalman Q (process noise)
+                    <input type="number" name="proximity.kalman_q" min="0.01" max="10" step="0.01">
+                </label>
+                <label class="advanced" hidden>Kalman R (measurement noise)
+                    <input type="number" name="proximity.kalman_r" min="0.1" max="100" step="0.1">
+                </label>
+                <label class="advanced" hidden>Kalman initial estimate
+                    <input type="number" name="proximity.kalman_initial" min="0.1" max="100" step="0.1">
+                </label>
+            </fieldset>
+
+            <fieldset class="advanced" hidden>
                 <legend>Bluetooth</legend>
                 <label>Adapter index
                     <input type="number" name="bluetooth.adapter_index" min="0" max="65535" step="1">
@@ -53,36 +87,7 @@
                 </label>
             </fieldset>
 
-            <fieldset>
-                <legend>Proximity</legend>
-                <label>RPL threshold
-                    <input type="number" name="proximity.rpl_threshold" min="0.5" max="100" step="0.5">
-                </label>
-                <label>Lock count
-                    <input type="number" name="proximity.lock_count" min="1" max="100" step="1">
-                </label>
-                <label>Unlock count
-                    <input type="number" name="proximity.unlock_count" min="1" max="100" step="1">
-                </label>
-                <label>Kalman Q (process noise)
-                    <input type="number" name="proximity.kalman_q" min="0.01" max="10" step="0.01">
-                </label>
-                <label>Kalman R (measurement noise)
-                    <input type="number" name="proximity.kalman_r" min="0.1" max="100" step="0.1">
-                </label>
-                <label>Kalman initial estimate
-                    <input type="number" name="proximity.kalman_initial" min="0.1" max="100" step="0.1">
-                </label>
-                <label>Disconnect action
-                    <select name="proximity.disconnect_action">
-                        <option value="lock">Lock</option>
-                        <option value="unlock">Unlock</option>
-                        <option value="none">None</option>
-                    </select>
-                </label>
-            </fieldset>
-
-            <fieldset>
+            <fieldset class="advanced" hidden>
                 <legend>Wake</legend>
                 <label>Duration (seconds)
                     <input type="number" name="wake.duration_secs" min="1" max="30" step="1">
@@ -95,7 +100,7 @@
                 </label>
             </fieldset>
 
-            <fieldset>
+            <fieldset class="advanced" hidden>
                 <legend>Web</legend>
                 <label>Port
                     <input type="number" name="web.port" min="1" max="65535" step="1">

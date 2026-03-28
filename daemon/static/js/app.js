@@ -11,6 +11,12 @@ function route() {
 window.addEventListener("hashchange", route);
 route();
 
+document.getElementById("advanced-toggle").addEventListener("change", (e) => {
+    document.querySelectorAll(".advanced").forEach(el => {
+        el.hidden = !e.target.checked;
+    });
+});
+
 async function authFetch(url, opts) {
     const res = await fetch(url, opts);
     if (res.status === 401) {

@@ -9,13 +9,92 @@
 </head>
 
 <body>
-    <h1>haraltr</h1>
+    <nav>
+        <strong>haraltr</strong>
+        <a href="#config">Config</a>
+        <a href="#monitor">Monitor</a>
+        <button id="logout-btn">Logout</button>
+    </nav>
 
-    <h2>Status</h2>
-    <div id="status">Loading...</div>
+    <div id="save-status"></div>
 
-    <h2>Config</h2>
-    <div id="config">Loading...</div>
+    <div id="config-page">
+        <h2>Configuration</h2>
+        <form id="config-form">
+            <fieldset>
+                <legend>Bluetooth</legend>
+                <label>Adapter index
+                    <input type="number" name="bluetooth.adapter_index" min="0" max="65535" step="1">
+                </label>
+                <label>Address type
+                    <select name="bluetooth.address_type">
+                        <option value="br_edr">BR/EDR</option>
+                        <option value="le_public">LE Public</option>
+                    </select>
+                </label>
+                <label>Poll interval (ms)
+                    <input type="number" name="bluetooth.poll_interval_ms" min="100" max="60000" step="100">
+                </label>
+                <label>Disconnect poll interval (ms)
+                    <input type="number" name="bluetooth.disconnect_poll_interval_ms" min="100" max="60000" step="100">
+                </label>
+            </fieldset>
+
+            <fieldset>
+                <legend>Proximity</legend>
+                <label>RPL threshold
+                    <input type="number" name="proximity.rpl_threshold" min="0.5" max="100" step="0.5">
+                </label>
+                <label>Lock count
+                    <input type="number" name="proximity.lock_count" min="1" max="100" step="1">
+                </label>
+                <label>Unlock count
+                    <input type="number" name="proximity.unlock_count" min="1" max="100" step="1">
+                </label>
+                <label>Kalman Q (process noise)
+                    <input type="number" name="proximity.kalman_q" min="0.01" max="10" step="0.01">
+                </label>
+                <label>Kalman R (measurement noise)
+                    <input type="number" name="proximity.kalman_r" min="0.1" max="100" step="0.1">
+                </label>
+                <label>Kalman initial estimate
+                    <input type="number" name="proximity.kalman_initial" min="0.1" max="100" step="0.1">
+                </label>
+                <label>Disconnect action
+                    <select name="proximity.disconnect_action">
+                        <option value="lock">Lock</option>
+                        <option value="unlock">Unlock</option>
+                        <option value="none">None</option>
+                    </select>
+                </label>
+            </fieldset>
+
+            <fieldset>
+                <legend>Wake</legend>
+                <label>Duration (seconds)
+                    <input type="number" name="wake.duration_secs" min="1" max="30" step="1">
+                </label>
+                <label>Mouse interval (ms)
+                    <input type="number" name="wake.mouse_interval_ms" min="50" max="5000" step="50">
+                </label>
+                <label>Enter interval (ms)
+                    <input type="number" name="wake.enter_interval_ms" min="500" max="30000" step="500">
+                </label>
+            </fieldset>
+
+            <fieldset>
+                <legend>Web</legend>
+                <label>Port
+                    <input type="number" name="web.port" min="1" max="65535" step="1">
+                </label>
+            </fieldset>
+        </form>
+    </div>
+
+    <div id="monitor-page" hidden>
+        <h2>Monitor</h2>
+        <p>TODO</p>
+    </div>
 
     <script src="/js/app.js"></script>
 </body>

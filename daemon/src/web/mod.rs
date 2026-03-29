@@ -3,25 +3,24 @@ pub mod auth;
 pub mod bt_devices;
 pub mod state;
 
-pub use state::AppState;
-pub use state::{DaemonStatus, ProximityPhase};
-
 use std::sync::Arc;
-
-use axum::Router;
-use axum::extract::Request;
-use axum::http::{StatusCode, header};
-use axum::middleware;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use rust_embed::RustEmbed;
-use tracing::info;
 
 use api::{
     add_device_handler, bt_devices_handler, get_config_handler, get_devices_handler,
     put_config_handler, remove_device_handler, status_handler,
 };
 use auth::{AuthUser, login_handler, logout_handler};
+use axum::{
+    Router,
+    extract::Request,
+    http::{StatusCode, header},
+    middleware,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use rust_embed::RustEmbed;
+pub use state::{AppState, DaemonStatus, ProximityPhase};
+use tracing::info;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]

@@ -1,5 +1,6 @@
-use crate::config::{DisconnectActionConfig, ProximityConfig};
 use tracing::{debug, info};
+
+use crate::config::{DisconnectActionConfig, ProximityConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {

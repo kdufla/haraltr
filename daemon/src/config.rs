@@ -1,7 +1,9 @@
+use std::{
+    fmt, fs,
+    path::{Path, PathBuf},
+};
+
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tracing::info;
 use xdg::BaseDirectories;
 
@@ -44,29 +46,21 @@ impl From<toml::ser::Error> for ConfigError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AddressTypeConfig {
+    #[default]
     BrEdr,
     LePublic,
 }
 
-impl Default for AddressTypeConfig {
-    fn default() -> Self {
-        AddressTypeConfig::BrEdr
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DisconnectActionConfig {
     Lock,
     Unlock,
+    #[default]
     None,
-}
-
-impl Default for DisconnectActionConfig {
-    fn default() -> Self {
-        DisconnectActionConfig::Lock
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,10 +1,11 @@
-use btmgmt::command::GetConnectionInformation;
-use btmgmt::{Client, client::Result};
+use btmgmt::{Client, client::Result, command::GetConnectionInformation};
 use btmgmt_packet::{Address, AddressType};
-use crate::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
 use tracing::{debug, trace};
 
-use crate::kalman::KalmanFilter;
+use crate::{
+    config::{AddressTypeConfig, BluetoothConfig, ProximityConfig},
+    kalman::KalmanFilter,
+};
 
 pub struct BtMgmt {
     client: Client,

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use tokio::sync::oneshot;
-use tokio::time;
+use tokio::{sync::oneshot, time};
 use tracing::{debug, info, warn};
 
 use crate::input::{VirtualKeyboard, VirtualMouse};

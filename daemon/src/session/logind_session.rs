@@ -1,5 +1,4 @@
-use zbus::zvariant::OwnedObjectPath;
-use zbus::{Connection, Proxy, Result};
+use zbus::{Connection, Proxy, Result, zvariant::OwnedObjectPath};
 
 pub struct LogindSession(Proxy<'static>);
 
@@ -17,7 +16,7 @@ impl LogindSession {
     }
 
     pub async fn is_active(&self) -> Result<bool> {
-        Ok(self.0.get_property("Active").await?)
+        self.0.get_property("Active").await
     }
 
     pub async fn lock(&self) -> Result<()> {

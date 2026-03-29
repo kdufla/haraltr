@@ -1,7 +1,5 @@
 use tracing::{debug, error, info};
-use zbus::zvariant::OwnedObjectPath;
-use zbus::{Connection, Proxy};
-use zbus::{Result, zvariant};
+use zbus::{Connection, Proxy, Result, zvariant, zvariant::OwnedObjectPath};
 
 use crate::session::logind_session::LogindSession;
 

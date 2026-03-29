@@ -8,21 +8,28 @@ mod session;
 mod wake_up;
 mod web;
 
-use crate::config::Config;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use arc_swap::ArcSwap;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::signal::unix::{SignalKind, signal};
-use tokio::time;
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    time,
+};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use crate::bt_mgmt::BtMgmt;
-use crate::proximity::{Action, Reading, State};
-use crate::session::SessionController;
-use crate::wake_up::wake_screen;
-use crate::web::{AppState, DaemonStatus, ProximityPhase};
+use crate::{
+    bt_mgmt::BtMgmt,
+    config::Config,
+    proximity::{Action, Reading, State},
+    session::SessionController,
+    wake_up::wake_screen,
+    web::{AppState, DaemonStatus, ProximityPhase},
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

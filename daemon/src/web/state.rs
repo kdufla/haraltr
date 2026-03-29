@@ -1,14 +1,10 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
 use rand::Rng;
 use serde::Serialize;
 
-use crate::config::Config;
-use crate::web::auth::SESSION_DURATION;
+use crate::{config::Config, web::auth::SESSION_DURATION};
 
 pub struct DaemonStatus {
     pub rpl: Option<f64>,

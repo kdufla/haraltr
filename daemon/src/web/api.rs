@@ -1,18 +1,14 @@
 use std::sync::Arc;
 
-use axum::Json;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::AppState;
 use crate::{
     config::{AddressTypeConfig, Config},
     web::bt_devices::list_devices,
 };
-
-use super::AppState;
 
 fn config_response(config: &Config) -> Value {
     let mut val = serde_json::to_value(config).unwrap();
@@ -217,21 +213,27 @@ pub async fn remove_device_handler(State(state): State<Arc<AppState>>) -> impl I
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::Config;
-    use crate::web::auth::{AuthUser, login_handler, logout_handler};
-    use crate::web::state::{AppState, DaemonStatus, ProximityPhase};
+    use std::{collections::HashMap, path::PathBuf, time::Instant};
+
     use arc_swap::ArcSwap;
-    use axum::Router;
-    use axum::body::Body;
-    use axum::http::Request;
-    use axum::middleware;
-    use axum::routing::{get, post};
+    use axum::{
+        Router,
+        body::Body,
+        http::Request,
+        middleware,
+        routing::{get, post},
+    };
     use http_body_util::BodyExt;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::time::Instant;
     use tower::ServiceExt;
+
+    use super::*;
+    use crate::{
+        config::Config,
+        web::{
+            auth::{AuthUser, login_handler, logout_handler},
+            state::{AppState, DaemonStatus, ProximityPhase},
+        },
+    };
 
     fn test_state_with_config_path(config: Config, path: PathBuf) -> Arc<AppState> {
         Arc::new(AppState {

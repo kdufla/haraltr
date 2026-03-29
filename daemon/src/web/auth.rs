@@ -4,11 +4,12 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHash, PasswordVerifier},
 };
-use axum::Json;
-use axum::extract::{FromRequestParts, State};
-use axum::http::StatusCode;
-use axum::http::request::Parts;
-use axum::response::IntoResponse;
+use axum::{
+    Json,
+    extract::{FromRequestParts, State},
+    http::{StatusCode, request::Parts},
+    response::IntoResponse,
+};
 use axum_extra::extract::CookieJar;
 use cookie::Cookie;
 use serde::Deserialize;
@@ -116,20 +117,19 @@ pub async fn logout_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::Config;
-    use crate::web::state::AppState;
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
+
     use arc_swap::ArcSwap;
     use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
-    use axum::Router;
-    use axum::body::Body;
-    use axum::http::Request;
-    use axum::middleware;
-    use axum::routing::post;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::time::{Duration, Instant};
+    use axum::{Router, body::Body, http::Request, middleware, routing::post};
     use tower::ServiceExt;
+
+    use super::*;
+    use crate::{config::Config, web::state::AppState};
 
     fn test_state(password_hash: Option<String>) -> Arc<AppState> {
         let mut config = Config::default();

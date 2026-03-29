@@ -1,10 +1,12 @@
-use crate::config::Config;
+use std::io::{self, Write};
+
 use argon2::{
     Argon2,
     password_hash::{PasswordHasher, SaltString, rand_core::OsRng},
 };
-use std::io::{self, Write};
 use zeroize::Zeroize;
+
+use crate::config::Config;
 
 pub fn set_password() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = Config::load()?;

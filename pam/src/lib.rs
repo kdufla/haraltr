@@ -1,5 +1,6 @@
-use nonstick::{AuthnFlags, ErrorCode, ModuleClient, PamModule, Result as PamResult, pam_export};
 use std::ffi::CStr;
+
+use nonstick::{AuthnFlags, ErrorCode, ModuleClient, PamModule, Result as PamResult, pam_export};
 use syslog::{Facility, Formatter3164};
 
 struct OddLenMod;

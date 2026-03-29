@@ -55,7 +55,6 @@ async function loadConfig() {
         const cfg = await res.json();
 
         setFormValue("bluetooth.adapter_index", cfg.bluetooth.adapter_index);
-        setFormValue("bluetooth.address_type", cfg.bluetooth.address_type);
         setFormValue("bluetooth.poll_interval_ms", cfg.bluetooth.poll_interval_ms);
         setFormValue("bluetooth.disconnect_poll_interval_ms", cfg.bluetooth.disconnect_poll_interval_ms);
 
@@ -94,7 +93,6 @@ function collectConfig() {
     return {
         bluetooth: {
             adapter_index: getFormValue("bluetooth.adapter_index"),
-            address_type: getFormValue("bluetooth.address_type"),
             poll_interval_ms: getFormValue("bluetooth.poll_interval_ms"),
             disconnect_poll_interval_ms: getFormValue("bluetooth.disconnect_poll_interval_ms"),
         },
@@ -218,6 +216,7 @@ async function loadDevices() {
         for (const dev of data.devices || []) {
             const opt = document.createElement("option");
             opt.value = dev.mac;
+            opt.dataset.addressType = dev.address_type;
             opt.textContent = dev.name + (dev.connected ? " [connected]" : "");
             sel.appendChild(opt);
         }
@@ -239,11 +238,15 @@ async function loadCurrentTarget() {
 
 document.getElementById("device-select").addEventListener("change", async (e) => {
     if (!e.target.value) return;
+    const selected = e.target.options[e.target.selectedIndex];
     try {
         await authFetch("/api/devices", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target_mac: e.target.value }),
+            body: JSON.stringify({
+                target_mac: e.target.value,
+                address_type: selected.dataset.addressType,
+            }),
         });
         loadCurrentTarget();
     } catch (e) {

@@ -1,6 +1,6 @@
 pub mod api;
 pub mod auth;
-pub mod bluez;
+pub mod bt_devices;
 pub mod state;
 
 pub use state::AppState;

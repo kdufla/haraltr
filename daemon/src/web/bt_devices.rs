@@ -14,6 +14,14 @@ fn prop_bool(props: &HashMap<String, OwnedValue>, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn prop_u16(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u16> {
+    u16::try_from(props.get(key)?.clone()).ok()
+}
+
+fn prop_u32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
+    u32::try_from(props.get(key)?.clone()).ok()
+}
+
 pub async fn list_devices() -> Result<Vec<Value>, Box<dyn std::error::Error + Send + Sync>> {
     let conn = zbus::Connection::system().await?;
     let proxy = zbus::fdo::ObjectManagerProxy::builder(&conn)
@@ -29,7 +37,20 @@ pub async fn list_devices() -> Result<Vec<Value>, Box<dyn std::error::Error + Se
             continue;
         }
         if let Some(props) = ifaces.get("org.bluez.Device1") {
-            let mac = prop_str(props, "Address").unwrap_or_default();
+            let mac = match prop_str(props, "Address") {
+                Some(m) => m,
+                None => continue,
+            };
+
+            let has_class = prop_u32(props, "Class").is_some();
+            let has_appearance = prop_u16(props, "Appearance").is_some();
+            let address_type = match (has_class, has_appearance) {
+                (_, false) if has_class => "br_edr",
+                (false, true) => "le_public",
+                (true, true) => "br_edr",
+                _ => continue,
+            };
+
             let name = prop_str(props, "Alias").unwrap_or_else(|| mac.clone());
             let connected = prop_bool(props, "Connected");
             let paired = prop_bool(props, "Paired");
@@ -39,6 +60,7 @@ pub async fn list_devices() -> Result<Vec<Value>, Box<dyn std::error::Error + Se
                 "name": name,
                 "connected": connected,
                 "paired": paired,
+                "address_type": address_type,
             }));
         }
     }

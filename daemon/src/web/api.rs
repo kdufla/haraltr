@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::{
     config::{AddressTypeConfig, Config},
-    web::bluez::list_devices,
+    web::bt_devices::list_devices,
 };
 
 use super::AppState;

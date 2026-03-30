@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use common::{ProximityStatus, QueryKind, QueryResponse};
+use common::{IPC_SOCKET_PATH, ProximityStatus, QueryKind, QueryResponse};
 use nonstick::{AuthnFlags, ErrorCode, ModuleClient, PamModule, Result as PamResult, pam_export};
 use syslog::{Facility, Formatter3164};
 
@@ -30,7 +30,7 @@ impl<M: ModuleClient> PamModule<M> for HaraltrPam {
         let username = handle.username(None)?;
         log(format!("proximity auth requested for {username:?}"));
 
-        let mut stream = match UnixStream::connect(common::SOCKET_PATH) {
+        let mut stream = match UnixStream::connect(IPC_SOCKET_PATH) {
             Ok(s) => s,
             Err(e) => {
                 log(format!("daemon unavailable: {e}"));

@@ -1,6 +1,6 @@
 use std::{mem::size_of, ptr};
 
-pub const SOCKET_PATH: &str = "/run/haraltr/query.sock";
+pub const IPC_SOCKET_PATH: &str = "/run/haraltr/query.sock";
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]

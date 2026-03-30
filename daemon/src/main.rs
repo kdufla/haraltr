@@ -1,6 +1,7 @@
 mod bt_mgmt;
 mod config;
 mod input;
+mod ipc;
 mod kalman;
 mod passwd;
 mod proximity;
@@ -15,6 +16,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use common::IPC_SOCKET_PATH;
 use tokio::{
     signal::unix::{SignalKind, signal},
     time,
@@ -25,6 +27,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use crate::{
     bt_mgmt::BtMgmt,
     config::Config,
+    ipc::spawn_ipc_listener,
     proximity::{Action, Reading, State},
     session::SessionController,
     wake_up::wake_screen,
@@ -77,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     spawn_web_server(&app_state);
+    spawn_ipc_listener(&app_state);
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
@@ -215,6 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let _ = std::fs::remove_file(IPC_SOCKET_PATH);
     info!("daemon stopped");
     Ok(())
 }

@@ -1,3 +1,6 @@
+[daemon]
+mode = "both"
+
 [bluetooth]
 target_mac = "AA:BB:CC:DD:EE:FF"
 adapter_index = 0

@@ -213,8 +213,25 @@ fn default_web_port() -> u16 {
     7878
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonMode {
+    #[default]
+    Both,
+    PamOnly,
+    LockOnly,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    #[serde(default)]
+    pub mode: DaemonMode,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub daemon: DaemonConfig,
     #[serde(default)]
     pub bluetooth: BluetoothConfig,
     #[serde(default)]

@@ -26,7 +26,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::{
     bt_mgmt::BtMgmt,
-    config::Config,
+    config::{Config, DaemonMode},
     ipc::spawn_ipc_listener,
     proximity::{Action, Reading, State},
     session::SessionController,
@@ -79,8 +79,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_notify: tokio::sync::Notify::new(),
     });
 
+    let mode = config.load().daemon.mode;
+
     spawn_web_server(&app_state);
-    spawn_ipc_listener(&app_state);
+    if matches!(mode, DaemonMode::Both | DaemonMode::PamOnly) {
+        spawn_ipc_listener(&app_state);
+    }
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
@@ -195,26 +199,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 interval = time::interval(Duration::from_millis(target_ms));
             }
 
-            match action {
-                Action::Lock => {
-                    if let Err(e) = session.lock().await {
-                        error!("lock failed: {e}");
+            if matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
+                match action {
+                    Action::Lock => {
+                        if let Err(e) = session.lock().await {
+                            error!("lock failed: {e}");
+                        }
                     }
+                    Action::Unlock => {
+                        let cfg = config.load();
+                        let wake_duration = Duration::from_secs(cfg.wake.duration_secs);
+                        let mouse_interval = Duration::from_millis(cfg.wake.mouse_interval_ms);
+                        let enter_interval = Duration::from_millis(cfg.wake.enter_interval_ms);
+                        if let Err(e) =
+                            wake_screen(wake_duration, mouse_interval, enter_interval).await
+                        {
+                            error!("wake failed: {e}");
+                        }
+                        if let Err(e) = session.unlock().await {
+                            error!("unlock failed: {e}");
+                        }
+                    }
+                    Action::None => {}
                 }
-                Action::Unlock => {
-                    let cfg = config.load();
-                    let wake_duration = Duration::from_secs(cfg.wake.duration_secs);
-                    let mouse_interval = Duration::from_millis(cfg.wake.mouse_interval_ms);
-                    let enter_interval = Duration::from_millis(cfg.wake.enter_interval_ms);
-                    if let Err(e) = wake_screen(wake_duration, mouse_interval, enter_interval).await
-                    {
-                        error!("wake failed: {e}");
-                    }
-                    if let Err(e) = session.unlock().await {
-                        error!("unlock failed: {e}");
-                    }
-                }
-                Action::None => {}
             }
         }
     }

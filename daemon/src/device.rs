@@ -1,12 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use arc_swap::ArcSwap;
 use tokio::{sync::mpsc, task::JoinHandle, time};
 use tracing::{error, warn};
 
 use crate::{
     bt_mgmt::BtMgmt,
-    config::{BluetoothConfig, Config, ProximityConfig},
+    config::{BluetoothConfig, ProximityConfig},
     proximity::{Reading, State},
     state::DeviceReport,
 };
@@ -15,7 +14,6 @@ pub fn spawn_device_task(
     target_mac: String,
     bt_config: BluetoothConfig,
     prox_config: ProximityConfig,
-    live_config: Arc<ArcSwap<Config>>,
     state_change_tx: mpsc::Sender<DeviceReport>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -29,22 +27,9 @@ pub fn spawn_device_task(
 
         let mut prox_state = State::new(&prox_config);
         let mut poll_interval = time::interval(Duration::from_millis(bt_config.poll_interval_ms));
-        let mut prev_kalman_q = prox_config.kalman_q;
-        let mut prev_kalman_r = prox_config.kalman_r;
 
         loop {
             poll_interval.tick().await;
-
-            // Hot-reload Kalman parameters
-            let config = live_config.load();
-            if let Some(device) = config.devices.iter().find(|d| d.target_mac == target_mac) {
-                let prox_cfg = config.proximity_for_device(device);
-                if prox_cfg.kalman_q != prev_kalman_q || prox_cfg.kalman_r != prev_kalman_r {
-                    bt.update_kalman_params(prox_cfg.kalman_q, prox_cfg.kalman_r);
-                    prev_kalman_q = prox_cfg.kalman_q;
-                    prev_kalman_r = prox_cfg.kalman_r;
-                }
-            }
 
             let (reading, rpl, raw_rpl, connected) = match bt.relative_path_loss().await {
                 Ok((filtered_rpl, raw_rpl)) => (
@@ -75,16 +60,12 @@ pub fn spawn_device_task(
 
             // adjust poll interval on disconnect/reconnect
             if was_disconnected != is_disconnected {
-                let cfg = live_config.load();
-                if let Some(device) = cfg.devices.iter().find(|d| d.target_mac == target_mac) {
-                    let bt_cfg = cfg.bluetooth_for_device(device);
-                    let target_ms = if is_disconnected {
-                        bt_cfg.disconnect_poll_interval_ms
-                    } else {
-                        bt_cfg.poll_interval_ms
-                    };
-                    poll_interval = time::interval(Duration::from_millis(target_ms));
-                }
+                let target_ms = if is_disconnected {
+                    bt_config.disconnect_poll_interval_ms
+                } else {
+                    bt_config.poll_interval_ms
+                };
+                poll_interval = time::interval(Duration::from_millis(target_ms));
             }
         }
     })

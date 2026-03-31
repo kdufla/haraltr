@@ -49,10 +49,6 @@ impl BtMgmt {
         Ok((filtered_rpl, raw_rpl))
     }
 
-    pub fn update_kalman_params(&mut self, q: f64, r: f64) {
-        self.denoise_filter.update_params(q, r);
-    }
-
     async fn get_connection_information(&self) -> Result<(i8, i8)> {
         let cmd = GetConnectionInformation::new(self.target_mac.clone(), self.addr_type.clone());
         let reply = self.client.call(self.adapter_index, cmd).await?;
@@ -89,11 +85,6 @@ impl KalmanFilter {
         self.p *= 1.0 - k;
         self.x
     }
-
-    fn update_params(&mut self, q: f64, r: f64) {
-        self.q = q;
-        self.r = r;
-    }
 }
 
 #[cfg(test)]
@@ -119,13 +110,5 @@ mod tests {
         // Should move closer to 12.0
         assert!(second_update > first_update);
         assert!(second_update < 12.0);
-    }
-
-    #[test]
-    fn kalman_filter_update_params() {
-        let mut kf = KalmanFilter::new(10.0, 0.1, 3.0);
-        kf.update_params(0.2, 4.0);
-        assert_eq!(kf.q, 0.2);
-        assert_eq!(kf.r, 4.0);
     }
 }

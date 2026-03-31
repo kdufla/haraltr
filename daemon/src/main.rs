@@ -48,11 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(devices = config.devices.len(), "config loaded");
 
-    let config = Arc::new(ArcSwap::from_pointee(config));
+    let live_config = Arc::new(ArcSwap::from_pointee(config));
     let daemon_start = Instant::now();
 
     let app_state = Arc::new(AppState {
-        config: config.clone(),
+        config: live_config.clone(),
         config_path: config_path.clone(),
         web_sessions: std::sync::Mutex::new(HashMap::new()),
         daemon_status: ArcSwap::from_pointee(DaemonStatus {
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_notify: tokio::sync::Notify::new(),
     });
 
-    let mode = config.load().daemon.mode;
+    let mode = live_config.load().daemon.mode;
 
     spawn_web_server(&app_state);
     if matches!(mode, DaemonMode::Both | DaemonMode::PamOnly) {
@@ -79,8 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("daemon started");
 
     'daemon: loop {
-        let cfg = config.load();
-        let devices = cfg.devices.clone();
+        let config = live_config.load();
+        let devices = config.devices.clone();
 
         if devices.is_empty() {
             info!("no devices configured, waiting for config reload");
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = sighup.recv() => {
                     info!("received SIGHUP, reloading config");
                     match Config::load() {
-                        Ok(new_cfg) => config.store(Arc::new(new_cfg)),
+                        Ok(new_config) => live_config.store(Arc::new(new_config)),
                         Err(e) => error!("failed to reload config: {e}"),
                     }
                 }
@@ -108,9 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for device in &devices {
             let handle = spawn_device_task(
                 device.target_mac.clone(),
-                cfg.bluetooth_for_device(device),
-                cfg.proximity_for_device(device),
-                config.clone(),
+                config.bluetooth_for_device(device),
+                config.proximity_for_device(device),
                 state_change_tx.clone(),
             );
             handles.push(handle);
@@ -137,14 +136,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     device_phases.insert(report.target_mac.clone(), report);
 
-                    let is_any_near = device_phases.values().any(|r| r.phase == ProximityPhase::Near);
+                    let is_any_near = device_phases.values().any(|latest_report| latest_report.phase == ProximityPhase::Near);
 
-                    let device_map = device_phases.iter().map(|(mac, r)| {
+                    let device_map = device_phases.iter().map(|(mac, latest_report)| {
                         (mac.clone(), DeviceStatus {
-                            rpl: r.rpl,
-                            raw_rpl: r.raw_rpl,
-                            phase: r.phase,
-                            connected: r.connected,
+                            rpl: latest_report.rpl,
+                            raw_rpl: latest_report.raw_rpl,
+                            phase: latest_report.phase,
+                            connected: latest_report.connected,
                         })
                     }).collect();
 
@@ -162,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else if !was_any_near && is_any_near {
                             info!("device near, unlocking");
-                            let cfg = config.load();
+                            let cfg = live_config.load();
                             let wake_duration = Duration::from_secs(cfg.wake.duration_secs);
                             let mouse_interval = Duration::from_millis(cfg.wake.mouse_interval_ms);
                             let enter_interval = Duration::from_millis(cfg.wake.enter_interval_ms);
@@ -187,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = sighup.recv() => {
                     info!("received SIGHUP, reloading config");
                     match Config::load() {
-                        Ok(new_cfg) => config.store(Arc::new(new_cfg)),
+                        Ok(new_cfg) => live_config.store(Arc::new(new_cfg)),
                         Err(e) => error!("failed to reload config: {e}"),
                     }
                     for h in &handles { h.abort(); }

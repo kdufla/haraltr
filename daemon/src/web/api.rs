@@ -34,15 +34,28 @@ fn deep_merge(base: &mut Value, patch: &Value) {
     }
 }
 
+// TODO this returns tmp somewhat useless state
 pub(super) async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let status = state.daemon_status.load();
     let uptime = status.started_at.elapsed().as_secs();
+
+    let devices: Vec<Value> = status
+        .devices
+        .iter()
+        .map(|(mac, device)| {
+            json!({
+                "target_mac": mac,
+                "rpl": device.rpl,
+                "raw_rpl": device.raw_rpl,
+                "state": device.phase,
+                "connected": device.connected,
+            })
+        })
+        .collect();
+
     Json(json!({
-        "rpl": status.rpl,
-        "raw_rpl": status.raw_rpl,
-        "state": status.state,
-        "connected": status.connected,
-        "target_mac": status.target_mac,
+        "any_near": status.any_near,
+        "devices": devices,
         "uptime_secs": uptime,
     }))
 }
@@ -91,13 +104,21 @@ pub(super) async fn put_config_handler(
             .into_response();
     }
 
-    let old_mac = current.resolved_target_mac().map(str::to_string);
-    let mac_changed = old_mac != new_config.resolved_target_mac().map(str::to_string);
+    let old_devices: Vec<String> = current
+        .devices
+        .iter()
+        .map(|device| device.target_mac.clone())
+        .collect();
+    let new_devices: Vec<String> = new_config
+        .devices
+        .iter()
+        .map(|device| device.target_mac.clone())
+        .collect();
 
     let response = config_response(&new_config);
     state.config.store(Arc::new(new_config));
 
-    if mac_changed {
+    if old_devices != new_devices {
         state.config_notify.notify_one();
     }
 
@@ -107,7 +128,6 @@ pub(super) async fn put_config_handler(
 pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(json!({
-        "active_device": config.active_device,
         "devices": config.devices.iter().map(|d| json!({
             "target_mac": d.target_mac,
             "name": d.name,
@@ -169,17 +189,12 @@ pub(super) async fn add_device_handler(
             .into_response();
     }
 
-    let is_first = new_config.devices.is_empty();
     new_config.devices.push(DeviceEntry {
         target_mac: body.target_mac.clone(),
         name: body.name,
         bluetooth: body.bluetooth,
         proximity: body.proximity,
     });
-
-    if is_first {
-        new_config.active_device = Some(body.target_mac);
-    }
 
     if let Err(e) = new_config.save_to_file(&state.config_path) {
         let (status, msg) = match e {
@@ -225,10 +240,6 @@ pub(super) async fn remove_device_handler(
             .into_response();
     }
 
-    if new_config.active_device.as_deref() == Some(&body.target_mac) {
-        new_config.active_device = None;
-    }
-
     if let Err(e) = new_config.save_to_file(&state.config_path) {
         let (status, msg) = match e {
             ConfigError::Validation(ve) => {
@@ -244,56 +255,6 @@ pub(super) async fn remove_device_handler(
 
     state.config.store(Arc::new(new_config));
     state.config_notify.notify_one();
-
-    Json(json!({"ok": true})).into_response()
-}
-
-#[derive(Deserialize)]
-pub(super) struct SetActiveDeviceRequest {
-    target_mac: String,
-}
-
-pub(super) async fn set_active_device_handler(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<SetActiveDeviceRequest>,
-) -> impl IntoResponse {
-    let current = state.config.load();
-    let mut new_config = current.as_ref().clone();
-
-    if !new_config
-        .devices
-        .iter()
-        .any(|d| d.target_mac == body.target_mac)
-    {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "device not found in devices list"})),
-        )
-            .into_response();
-    }
-
-    let old_mac = current.resolved_target_mac().map(str::to_string);
-    new_config.active_device = Some(body.target_mac);
-    let new_mac = new_config.resolved_target_mac().map(str::to_string);
-    let mac_changed = old_mac != new_mac;
-
-    if let Err(e) = new_config.save_to_file(&state.config_path) {
-        let (status, msg) = match e {
-            ConfigError::Validation(ve) => {
-                (StatusCode::BAD_REQUEST, format!("invalid config: {ve}"))
-            }
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to save config: {e}"),
-            ),
-        };
-        return (status, Json(json!({"error": msg}))).into_response();
-    }
-
-    state.config.store(Arc::new(new_config));
-    if mac_changed {
-        state.config_notify.notify_one();
-    }
 
     Json(json!({"ok": true})).into_response()
 }
@@ -321,16 +282,24 @@ mod tests {
     };
 
     fn test_state_with_config_path(config: Config, path: PathBuf) -> Arc<AppState> {
+        use crate::state::DeviceStatus;
+        let mut devices = HashMap::new();
+        devices.insert(
+            "24:29:34:8E:0A:58".into(),
+            DeviceStatus {
+                rpl: Some(12.3),
+                raw_rpl: Some(14.1),
+                phase: ProximityPhase::Near,
+                connected: true,
+            },
+        );
         Arc::new(AppState {
             config: Arc::new(ArcSwap::from_pointee(config)),
             config_path: path,
             web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: ArcSwap::from_pointee(DaemonStatus {
-                rpl: Some(12.3),
-                raw_rpl: Some(14.1),
-                state: ProximityPhase::Near,
-                connected: true,
-                target_mac: Some("24:29:34:8E:0A:58".into()),
+                devices,
+                any_near: true,
                 started_at: Instant::now(),
             }),
             config_notify: tokio::sync::Notify::new(),
@@ -355,10 +324,6 @@ mod tests {
                 get(get_devices_handler)
                     .post(add_device_handler)
                     .delete(remove_device_handler),
-            )
-            .route(
-                "/api/devices/active",
-                axum::routing::put(set_active_device_handler),
             )
             .route("/api/logout", post(logout_handler))
             .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(
@@ -394,12 +359,10 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
+        // TODO update assertions when web UI is redesigned for multi-device
         let json = body_json(resp).await;
-        assert_eq!(json["rpl"], 12.3);
-        assert_eq!(json["raw_rpl"], 14.1);
-        assert_eq!(json["state"], "near");
-        assert!(json["connected"].as_bool().unwrap());
-        assert_eq!(json["target_mac"], "24:29:34:8E:0A:58");
+        assert!(json["any_near"].as_bool().unwrap());
+        assert!(json["devices"].is_array());
         assert!(json["uptime_secs"].is_number());
     }
 
@@ -541,10 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_devices_returns_list() {
-        let mut config = Config {
-            active_device: Some("AA:BB:CC:DD:EE:FF".into()),
-            ..Default::default()
-        };
+        let mut config = Config::default();
         config.devices.push(DeviceEntry {
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: Some("Phone".into()),
@@ -562,7 +522,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let json = body_json(resp).await;
-        assert_eq!(json["active_device"], "AA:BB:CC:DD:EE:FF");
         assert_eq!(json["devices"].as_array().unwrap().len(), 1);
         assert_eq!(json["devices"][0]["target_mac"], "AA:BB:CC:DD:EE:FF");
         assert_eq!(json["devices"][0]["name"], "Phone");
@@ -597,8 +556,6 @@ mod tests {
         let cfg = state.config.load();
         assert_eq!(cfg.devices.len(), 1);
         assert_eq!(cfg.devices[0].target_mac, "AA:BB:CC:DD:EE:FF");
-        // First device becomes active
-        assert_eq!(cfg.active_device.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -664,10 +621,7 @@ mod tests {
         let dir = std::env::temp_dir().join("haraltr_test_remove_device");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("config.toml");
-        let mut config = Config {
-            active_device: Some("AA:BB:CC:DD:EE:FF".into()),
-            ..Default::default()
-        };
+        let mut config = Config::default();
         config.devices.push(DeviceEntry {
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
@@ -696,53 +650,6 @@ mod tests {
 
         let cfg = state.config.load();
         assert!(cfg.devices.is_empty());
-        assert!(cfg.active_device.is_none());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn set_active_device() {
-        let dir = std::env::temp_dir().join("haraltr_test_set_active");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("config.toml");
-        let mut config = Config::default();
-        config.devices.push(DeviceEntry {
-            target_mac: "AA:BB:CC:DD:EE:FF".into(),
-            name: Some("Phone".into()),
-            bluetooth: BluetoothOverrides::default(),
-            proximity: ProximityOverrides::default(),
-        });
-        config.devices.push(DeviceEntry {
-            target_mac: "11:22:33:44:55:66".into(),
-            name: Some("Watch".into()),
-            bluetooth: BluetoothOverrides::default(),
-            proximity: ProximityOverrides::default(),
-        });
-        config.save_to_file(&path).unwrap();
-
-        let state = test_state_with_config_path(config, path.clone());
-        let token = state.create_session();
-        let app = test_router(state.clone());
-
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .method("PUT")
-                    .uri("/api/devices/active")
-                    .header("content-type", "application/json")
-                    .header("cookie", format!("session={token}"))
-                    .body(Body::from(r#"{"target_mac":"11:22:33:44:55:66"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        assert_eq!(
-            state.config.load().active_device.as_deref(),
-            Some("11:22:33:44:55:66")
-        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

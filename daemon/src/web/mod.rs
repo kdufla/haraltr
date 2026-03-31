@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use api::{
     add_device_handler, bt_devices_handler, get_config_handler, get_devices_handler,
-    put_config_handler, remove_device_handler, set_active_device_handler, status_handler,
+    put_config_handler, remove_device_handler, status_handler,
 };
 use auth::{AuthUser, login_handler, logout_handler};
 use axum::{
@@ -14,7 +14,7 @@ use axum::{
     http::{StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
 };
 use rust_embed::RustEmbed;
 // pub use state::{AppState, DaemonStatus, ProximityPhase};
@@ -61,7 +61,6 @@ pub async fn serve(state: Arc<AppState>) {
                 .post(add_device_handler)
                 .delete(remove_device_handler),
         )
-        .route("/api/devices/active", put(set_active_device_handler))
         .route("/api/bt-devices", get(bt_devices_handler))
         .route("/api/logout", post(logout_handler))
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(

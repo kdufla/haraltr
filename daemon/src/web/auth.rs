@@ -131,7 +131,7 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        state::{AppState, DaemonStatus, ProximityPhase},
+        state::{AppState, DaemonStatus},
     };
 
     fn test_state(password_hash: Option<String>) -> Arc<AppState> {
@@ -142,11 +142,8 @@ mod tests {
             config_path: PathBuf::from("/tmp/test-config.toml"),
             web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: ArcSwap::from_pointee(DaemonStatus {
-                rpl: None,
-                raw_rpl: None,
-                state: ProximityPhase::Disconnected,
-                connected: false,
-                target_mac: None,
+                devices: HashMap::new(),
+                any_near: false,
                 started_at: Instant::now(),
             }),
             config_notify: tokio::sync::Notify::new(),

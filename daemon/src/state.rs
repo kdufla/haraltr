@@ -6,12 +6,26 @@ use serde::Serialize;
 
 use crate::{config::Config, web::auth::AUTH_SESSION_DURATION};
 
-pub struct DaemonStatus {
+pub struct DeviceReport {
+    pub target_mac: String,
+    pub phase: ProximityPhase,
     pub rpl: Option<f64>,
     pub raw_rpl: Option<f64>,
-    pub state: ProximityPhase,
     pub connected: bool,
-    pub target_mac: Option<String>,
+}
+
+pub struct DeviceStatus {
+    pub rpl: Option<f64>,
+    pub raw_rpl: Option<f64>,
+    pub phase: ProximityPhase,
+    pub connected: bool,
+}
+
+// TODO this is stripped down kinda useless
+// multi-device should be fixed for web and ipc
+pub struct DaemonStatus {
+    pub devices: HashMap<String, DeviceStatus>,
+    pub any_near: bool,
     pub started_at: Instant,
 }
 
@@ -83,11 +97,8 @@ mod tests {
             config_path: PathBuf::from("test_config.toml"),
             web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: ArcSwap::from_pointee(DaemonStatus {
-                rpl: None,
-                raw_rpl: None,
-                state: ProximityPhase::Disconnected,
-                connected: false,
-                target_mac: None,
+                devices: HashMap::new(),
+                any_near: false,
                 started_at: Instant::now(),
             }),
             config_notify: tokio::sync::Notify::new(),

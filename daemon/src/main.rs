@@ -1,5 +1,6 @@
 mod bt_mgmt;
 mod config;
+mod device;
 mod input;
 mod ipc;
 mod logind;
@@ -19,17 +20,17 @@ use arc_swap::ArcSwap;
 use common::IPC_SOCKET_PATH;
 use tokio::{
     signal::unix::{SignalKind, signal},
-    time,
+    sync::mpsc,
+    task::JoinHandle,
 };
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::{
-    bt_mgmt::BtMgmt,
     config::{Config, DaemonMode},
+    device::spawn_device_task,
     ipc::spawn_ipc_listener,
-    proximity::{Action, Reading, State},
-    state::{AppState, DaemonStatus, ProximityPhase},
+    state::{AppState, DaemonStatus, DeviceReport, DeviceStatus, ProximityPhase},
     wake_up::wake_screen,
 };
 
@@ -45,20 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load()?;
     let config_path = config::config_path()?;
 
-    let target_mac = config.resolved_target_mac().map(String::from);
-    let bt = config.resolved_bluetooth();
-    let prox = config.resolved_proximity();
-
-    if target_mac.is_none() {
-        warn!("no active device set — waiting for config reload via SIGHUP");
-    }
-
-    info!(
-        target_mac = target_mac.as_deref().unwrap_or("<not set>"),
-        poll_ms = bt.poll_interval_ms,
-        rpl_threshold = prox.rpl_threshold,
-        "config loaded"
-    );
+    info!(devices = config.devices.len(), "config loaded");
 
     let config = Arc::new(ArcSwap::from_pointee(config));
     let daemon_start = Instant::now();
@@ -68,11 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_path: config_path.clone(),
         web_sessions: std::sync::Mutex::new(HashMap::new()),
         daemon_status: ArcSwap::from_pointee(DaemonStatus {
-            rpl: None,
-            raw_rpl: None,
-            state: ProximityPhase::Disconnected,
-            connected: false,
-            target_mac: config.load().resolved_target_mac().map(String::from),
+            devices: HashMap::new(),
+            any_near: true,
             started_at: daemon_start,
         }),
         config_notify: tokio::sync::Notify::new(),
@@ -94,8 +79,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("daemon started");
 
     'daemon: loop {
-        while config.load().resolved_target_mac().is_none() {
-            info!("no active device set, waiting for config reload");
+        let cfg = config.load();
+        let devices = cfg.devices.clone();
+
+        if devices.is_empty() {
+            info!("no devices configured, waiting for config reload");
             tokio::select! {
                 _ = sigterm.recv() => break 'daemon,
                 _ = sigint.recv() => break 'daemon,
@@ -110,119 +98,105 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("config changed via web UI");
                 }
             }
+            continue;
         }
 
-        let cfg = config.load();
-        let target_mac = cfg.resolved_target_mac().unwrap().to_string();
-        let bt_cfg = cfg.resolved_bluetooth();
-        let prox_cfg = cfg.resolved_proximity();
-        info!("monitoring {target_mac}");
+        let (state_change_tx, mut state_change_rx) =
+            mpsc::channel::<DeviceReport>(devices.len() * 4);
+        let mut handles: Vec<JoinHandle<()>> = Vec::new();
 
-        let mut bt = BtMgmt::new(&target_mac, &bt_cfg, &prox_cfg)?;
-        let mut state = State::new(&prox_cfg);
-        let mut interval = time::interval(Duration::from_millis(bt_cfg.poll_interval_ms));
-        let mut prev_kalman_q = prox_cfg.kalman_q;
-        let mut prev_kalman_r = prox_cfg.kalman_r;
+        for device in &devices {
+            let handle = spawn_device_task(
+                device.target_mac.clone(),
+                cfg.bluetooth_for_device(device),
+                cfg.proximity_for_device(device),
+                config.clone(),
+                state_change_tx.clone(),
+            );
+            handles.push(handle);
+            info!(mac = %device.target_mac, "spawned device monitor");
+        }
+        drop(state_change_tx);
+
+        let mut device_phases: HashMap<String, DeviceReport> = HashMap::new();
+        let mut was_any_near = true; // start true to avoid spurious unlock on daemon start
+
+        app_state.daemon_status.store(Arc::new(DaemonStatus {
+            devices: HashMap::new(),
+            any_near: true,
+            started_at: daemon_start,
+        }));
 
         loop {
             tokio::select! {
-                _ = interval.tick() => {}
-                _ = sigterm.recv() => break 'daemon,
-                _ = sigint.recv() => break 'daemon,
+                msg = state_change_rx.recv() => {
+                    let Some(report) = msg else {
+                        warn!("all device tasks exited, waiting for config reload");
+                        break;
+                    };
+
+                    device_phases.insert(report.target_mac.clone(), report);
+
+                    let is_any_near = device_phases.values().any(|r| r.phase == ProximityPhase::Near);
+
+                    let device_map = device_phases.iter().map(|(mac, r)| {
+                        (mac.clone(), DeviceStatus {
+                            rpl: r.rpl,
+                            raw_rpl: r.raw_rpl,
+                            phase: r.phase,
+                            connected: r.connected,
+                        })
+                    }).collect();
+
+                    app_state.daemon_status.store(Arc::new(DaemonStatus {
+                        devices: device_map,
+                        any_near: is_any_near,
+                        started_at: daemon_start,
+                    }));
+
+                    if matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
+                        if was_any_near && !is_any_near {
+                            info!("all devices far/disconnected, locking");
+                            if let Err(e) = logind_session.lock().await {
+                                error!("lock failed: {e}");
+                            }
+                        } else if !was_any_near && is_any_near {
+                            info!("device near, unlocking");
+                            let cfg = config.load();
+                            let wake_duration = Duration::from_secs(cfg.wake.duration_secs);
+                            let mouse_interval = Duration::from_millis(cfg.wake.mouse_interval_ms);
+                            let enter_interval = Duration::from_millis(cfg.wake.enter_interval_ms);
+                            if let Err(e) = wake_screen(wake_duration, mouse_interval, enter_interval).await {
+                                error!("wake failed: {e}");
+                            }
+                            if let Err(e) = logind_session.unlock().await {
+                                error!("unlock failed: {e}");
+                            }
+                        }
+                        was_any_near = is_any_near;
+                    }
+                }
+                _ = sigterm.recv() => {
+                    for h in &handles { h.abort(); }
+                    break 'daemon;
+                }
+                _ = sigint.recv() => {
+                    for h in &handles { h.abort(); }
+                    break 'daemon;
+                }
                 _ = sighup.recv() => {
                     info!("received SIGHUP, reloading config");
                     match Config::load() {
                         Ok(new_cfg) => config.store(Arc::new(new_cfg)),
                         Err(e) => error!("failed to reload config: {e}"),
                     }
+                    for h in &handles { h.abort(); }
                     break;
                 }
                 _ = app_state.config_notify.notified() => {
-                    info!("config changed via web UI, restarting monitor loop");
+                    info!("config changed via web UI, restarting device monitors");
+                    for h in &handles { h.abort(); }
                     break;
-                }
-            }
-
-            let cfg = config.load();
-            let prox_cfg = cfg.resolved_proximity();
-            if prox_cfg.kalman_q != prev_kalman_q || prox_cfg.kalman_r != prev_kalman_r {
-                info!(
-                    kalman_q = prox_cfg.kalman_q,
-                    kalman_r = prox_cfg.kalman_r,
-                    "kalman parameters updated"
-                );
-                bt.update_kalman_params(prox_cfg.kalman_q, prox_cfg.kalman_r);
-                prev_kalman_q = prox_cfg.kalman_q;
-                prev_kalman_r = prox_cfg.kalman_r;
-            }
-
-            let reading = match bt.relative_path_loss().await {
-                Ok((filtered_rpl, raw_rpl)) => {
-                    // update daemon status
-                    app_state.daemon_status.store(Arc::new(DaemonStatus {
-                        rpl: Some(filtered_rpl),
-                        raw_rpl: Some(raw_rpl),
-                        state: state.proximity_phase(),
-                        connected: true,
-                        target_mac: Some(target_mac.clone()),
-                        started_at: daemon_start,
-                    }));
-
-                    Reading::Rpl(filtered_rpl)
-                }
-                Err(e) => {
-                    warn!("BT poll failed: {e}");
-
-                    // update daemon status to disconnected
-                    app_state.daemon_status.store(Arc::new(DaemonStatus {
-                        rpl: None,
-                        raw_rpl: None,
-                        state: ProximityPhase::Disconnected,
-                        connected: false,
-                        target_mac: Some(target_mac.clone()),
-                        started_at: daemon_start,
-                    }));
-
-                    Reading::ConnectionLost
-                }
-            };
-
-            let was_disconnected = state.is_disconnected();
-            let action = state.transition(reading);
-            let is_disconnected = state.is_disconnected();
-
-            if was_disconnected != is_disconnected {
-                let bt_cfg = config.load().resolved_bluetooth();
-                let target_ms = if is_disconnected {
-                    bt_cfg.disconnect_poll_interval_ms
-                } else {
-                    bt_cfg.poll_interval_ms
-                };
-                interval = time::interval(Duration::from_millis(target_ms));
-            }
-
-            if matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
-                match action {
-                    Action::Lock => {
-                        if let Err(e) = logind_session.lock().await {
-                            error!("lock failed: {e}");
-                        }
-                    }
-                    Action::Unlock => {
-                        let cfg = config.load();
-                        let wake_duration = Duration::from_secs(cfg.wake.duration_secs);
-                        let mouse_interval = Duration::from_millis(cfg.wake.mouse_interval_ms);
-                        let enter_interval = Duration::from_millis(cfg.wake.enter_interval_ms);
-                        if let Err(e) =
-                            wake_screen(wake_duration, mouse_interval, enter_interval).await
-                        {
-                            error!("wake failed: {e}");
-                        }
-                        if let Err(e) = logind_session.unlock().await {
-                            error!("unlock failed: {e}");
-                        }
-                    }
-                    Action::None => {}
                 }
             }
         }

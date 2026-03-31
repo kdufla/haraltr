@@ -72,3 +72,50 @@ impl AppState {
         self.web_sessions.lock().unwrap().remove(token);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app_state() -> AppState {
+        AppState {
+            config: Arc::new(ArcSwap::from_pointee(Config::default())),
+            config_path: PathBuf::from("test_config.toml"),
+            web_sessions: std::sync::Mutex::new(HashMap::new()),
+            daemon_status: ArcSwap::from_pointee(DaemonStatus {
+                rpl: None,
+                raw_rpl: None,
+                state: ProximityPhase::Disconnected,
+                connected: false,
+                target_mac: None,
+                started_at: Instant::now(),
+            }),
+            config_notify: tokio::sync::Notify::new(),
+        }
+    }
+
+    #[test]
+    fn proximity_phase_display() {
+        assert_eq!(format!("{}", ProximityPhase::Near), "near");
+        assert_eq!(format!("{}", ProximityPhase::Far), "far");
+        assert_eq!(format!("{}", ProximityPhase::Disconnected), "disconnected");
+    }
+
+    #[test]
+    fn app_state_session_management() {
+        let state = test_app_state();
+        let token = state.create_session();
+
+        assert_eq!(token.len(), 64); // hex encoded 32 bytes
+        assert!(state.validate_session(&token));
+
+        state.remove_session(&token);
+        assert!(!state.validate_session(&token));
+    }
+
+    #[test]
+    fn app_state_validate_missing_session() {
+        let state = test_app_state();
+        assert!(!state.validate_session("nonexistent"));
+    }
+}

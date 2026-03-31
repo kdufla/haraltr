@@ -279,4 +279,18 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn proximity_phase_mapping() {
+        let mut s = new_lock_on_disconnect();
+        assert_eq!(s.proximity_phase(), ProximityPhase::Near);
+
+        s.phase = Phase::Far {
+            consecutive_near: 0,
+        };
+        assert_eq!(s.proximity_phase(), ProximityPhase::Far);
+
+        s.phase = Phase::Disconnected;
+        assert_eq!(s.proximity_phase(), ProximityPhase::Disconnected);
+    }
 }

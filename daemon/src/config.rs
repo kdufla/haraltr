@@ -813,4 +813,31 @@ target_mac = "11:22:33:44:55:66"
         assert!(validate_mac("AABB.CCDD.EEFF").is_err());
         assert!(validate_mac("").is_err());
     }
+
+    #[test]
+    fn config_error_display() {
+        let io_err = ConfigError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found",
+        ));
+        assert!(format!("{}", io_err).contains("config I/O error"));
+
+        let validation_err = ConfigError::Validation(validator::ValidationErrors::new());
+        assert!(format!("{}", validation_err).contains("config validation error"));
+    }
+
+    #[test]
+    fn config_error_from_conversions() {
+        let io_err: ConfigError =
+            std::io::Error::new(std::io::ErrorKind::NotFound, "not found").into();
+        assert!(matches!(io_err, ConfigError::Io(_)));
+
+        let toml_err = toml::from_str::<Config>("invalid = [[[").unwrap_err();
+        let parse_err: ConfigError = toml_err.into();
+        assert!(matches!(parse_err, ConfigError::Parse(_)));
+
+        let validation_errors = validator::ValidationErrors::new();
+        let val_err: ConfigError = validation_errors.into();
+        assert!(matches!(val_err, ConfigError::Validation(_)));
+    }
 }

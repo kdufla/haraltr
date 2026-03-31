@@ -66,3 +66,54 @@ pub(super) async fn list_devices() -> Result<Vec<Value>, Box<dyn std::error::Err
     }
     Ok(devices)
 }
+
+#[cfg(test)]
+mod tests {
+    use zbus::zvariant::Str;
+
+    use super::*;
+
+    #[test]
+    fn prop_str_extracts_string_and_handles_missing() {
+        let mut props = HashMap::new();
+        props.insert(
+            "Address".to_string(),
+            OwnedValue::from(Str::from("AA:BB:CC:DD:EE:FF")),
+        );
+
+        assert_eq!(
+            prop_str(&props, "Address"),
+            Some("AA:BB:CC:DD:EE:FF".to_string())
+        );
+        assert_eq!(prop_str(&props, "11:22:33:44:55:66"), None);
+    }
+
+    #[test]
+    fn prop_bool_extracts_bool_and_defaults_to_false() {
+        let mut props = HashMap::new();
+        props.insert("Connected".to_string(), OwnedValue::from(true));
+        props.insert("Paired".to_string(), OwnedValue::from(false));
+
+        assert!(prop_bool(&props, "Connected"));
+        assert!(!prop_bool(&props, "Paired"));
+        assert!(!prop_bool(&props, "Nonexistent"));
+    }
+
+    #[test]
+    fn prop_u16_extracts_u16_and_handles_missing() {
+        let mut props = HashMap::new();
+        props.insert("Appearance".to_string(), OwnedValue::from(123u16));
+
+        assert_eq!(prop_u16(&props, "Appearance"), Some(123));
+        assert_eq!(prop_u16(&props, "Nonexistent"), None);
+    }
+
+    #[test]
+    fn prop_u32_extracts_u32_and_handles_missing() {
+        let mut props = HashMap::new();
+        props.insert("Class".to_string(), OwnedValue::from(456u32));
+
+        assert_eq!(prop_u32(&props, "Class"), Some(456));
+        assert_eq!(prop_u32(&props, "Nonexistent"), None);
+    }
+}

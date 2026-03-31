@@ -95,3 +95,37 @@ impl KalmanFilter {
         self.r = r;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kalman_filter_init() {
+        let kf = KalmanFilter::new(10.0, 0.1, 3.0);
+        assert_eq!(kf.x, 10.0);
+        assert_eq!(kf.p, 1.0);
+        assert_eq!(kf.q, 0.1);
+        assert_eq!(kf.r, 3.0);
+    }
+
+    #[test]
+    fn kalman_filter_update() {
+        let mut kf = KalmanFilter::new(10.0, 0.1, 3.0);
+        let first_update = kf.update(12.0);
+        assert!(first_update > 10.0 && first_update < 12.0);
+
+        let second_update = kf.update(12.0);
+        // Should move closer to 12.0
+        assert!(second_update > first_update);
+        assert!(second_update < 12.0);
+    }
+
+    #[test]
+    fn kalman_filter_update_params() {
+        let mut kf = KalmanFilter::new(10.0, 0.1, 3.0);
+        kf.update_params(0.2, 4.0);
+        assert_eq!(kf.q, 0.2);
+        assert_eq!(kf.r, 4.0);
+    }
+}

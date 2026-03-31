@@ -1,12 +1,15 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use validator::Validate;
 
 use super::AppState;
 use crate::{
-    config::{BluetoothOverrides, Config, DeviceEntry, ProximityOverrides},
+    config::{
+        BluetoothOverrides, Config, ConfigError, DeviceEntry, ProximityOverrides, validate_mac,
+    },
     web::bt_devices::list_devices,
 };
 
@@ -29,105 +32,6 @@ fn deep_merge(base: &mut Value, patch: &Value) {
             *base = patch.clone();
         }
     }
-}
-
-fn validate_config(config: &Config) -> Result<(), String> {
-    if config.web.port == 0 {
-        return Err("web.port must be > 0".into());
-    }
-    if config.proximity.rpl_threshold <= 0.0 {
-        return Err("proximity.rpl_threshold must be positive".into());
-    }
-    if config.proximity.kalman_q <= 0.0 {
-        return Err("proximity.kalman_q must be positive".into());
-    }
-    if config.proximity.kalman_r <= 0.0 {
-        return Err("proximity.kalman_r must be positive".into());
-    }
-    if config.bluetooth.poll_interval_ms == 0 {
-        return Err("bluetooth.poll_interval_ms must be > 0".into());
-    }
-    if config.bluetooth.disconnect_poll_interval_ms == 0 {
-        return Err("bluetooth.disconnect_poll_interval_ms must be > 0".into());
-    }
-    if config.proximity.lock_count == 0 {
-        return Err("proximity.lock_count must be > 0".into());
-    }
-    if config.proximity.unlock_count == 0 {
-        return Err("proximity.unlock_count must be > 0".into());
-    }
-
-    let mut seen_macs = HashSet::new();
-    for (i, dev) in config.devices.iter().enumerate() {
-        if !is_valid_mac(&dev.target_mac) {
-            return Err(format!(
-                "devices[{i}]: invalid MAC address '{}'",
-                dev.target_mac
-            ));
-        }
-        if !seen_macs.insert(&dev.target_mac) {
-            return Err(format!(
-                "devices[{i}]: duplicate MAC address '{}'",
-                dev.target_mac
-            ));
-        }
-        if let Some(v) = dev.proximity.rpl_threshold
-            && v <= 0.0
-        {
-            return Err(format!("devices[{i}]: rpl_threshold must be positive"));
-        }
-        if let Some(v) = dev.proximity.kalman_q
-            && v <= 0.0
-        {
-            return Err(format!("devices[{i}]: kalman_q must be positive"));
-        }
-        if let Some(v) = dev.proximity.kalman_r
-            && v <= 0.0
-        {
-            return Err(format!("devices[{i}]: kalman_r must be positive"));
-        }
-        if let Some(v) = dev.bluetooth.poll_interval_ms
-            && v == 0
-        {
-            return Err(format!("devices[{i}]: poll_interval_ms must be > 0"));
-        }
-        if let Some(v) = dev.bluetooth.disconnect_poll_interval_ms
-            && v == 0
-        {
-            return Err(format!(
-                "devices[{i}]: disconnect_poll_interval_ms must be > 0"
-            ));
-        }
-        if let Some(v) = dev.proximity.lock_count
-            && v == 0
-        {
-            return Err(format!("devices[{i}]: lock_count must be > 0"));
-        }
-        if let Some(v) = dev.proximity.unlock_count
-            && v == 0
-        {
-            return Err(format!("devices[{i}]: unlock_count must be > 0"));
-        }
-    }
-
-    if let Some(ref active_mac) = config.active_device
-        && !config.devices.iter().any(|d| d.target_mac == *active_mac)
-    {
-        return Err(format!(
-            "active_device '{}' not found in devices list",
-            active_mac
-        ));
-    }
-
-    Ok(())
-}
-
-fn is_valid_mac(mac: &str) -> bool {
-    let parts: Vec<&str> = mac.split(':').collect();
-    parts.len() == 6
-        && parts
-            .iter()
-            .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 pub async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -163,14 +67,18 @@ pub async fn put_config_handler(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("invalid config: {e}")})),
+                Json(json!({"error": format!("invalid config format: {e}")})),
             )
                 .into_response();
         }
     };
 
-    if let Err(msg) = validate_config(&new_config) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
+    if let Err(e) = new_config.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("invalid config: {e}")})),
+        )
+            .into_response();
     }
 
     new_config.web.password_hash = original_hash;
@@ -220,13 +128,16 @@ pub async fn bt_devices_handler() -> impl IntoResponse {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
 pub struct DeviceRequest {
+    #[validate(custom(function = "validate_mac"))]
     target_mac: String,
     #[serde(default)]
     name: Option<String>,
+    #[validate(nested)]
     #[serde(default)]
     bluetooth: BluetoothOverrides,
+    #[validate(nested)]
     #[serde(default)]
     proximity: ProximityOverrides,
 }
@@ -235,10 +146,10 @@ pub async fn add_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeviceRequest>,
 ) -> impl IntoResponse {
-    if !is_valid_mac(&body.target_mac) {
+    if let Err(e) = body.validate() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "invalid MAC address format, expected AA:BB:CC:DD:EE:FF"})),
+            Json(json!({"error": format!("invalid device request: {e}")})),
         )
             .into_response();
     }
@@ -271,11 +182,16 @@ pub async fn add_device_handler(
     }
 
     if let Err(e) = new_config.save_to_file(&state.config_path) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to save config: {e}")})),
-        )
-            .into_response();
+        let (status, msg) = match e {
+            ConfigError::Validation(ve) => {
+                (StatusCode::BAD_REQUEST, format!("invalid config: {ve}"))
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to save config: {e}"),
+            ),
+        };
+        return (status, Json(json!({"error": msg}))).into_response();
     }
 
     state.config.store(Arc::new(new_config));
@@ -314,11 +230,16 @@ pub async fn remove_device_handler(
     }
 
     if let Err(e) = new_config.save_to_file(&state.config_path) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to save config: {e}")})),
-        )
-            .into_response();
+        let (status, msg) = match e {
+            ConfigError::Validation(ve) => {
+                (StatusCode::BAD_REQUEST, format!("invalid config: {ve}"))
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to save config: {e}"),
+            ),
+        };
+        return (status, Json(json!({"error": msg}))).into_response();
     }
 
     state.config.store(Arc::new(new_config));
@@ -357,11 +278,16 @@ pub async fn set_active_device_handler(
     let mac_changed = old_mac != new_mac;
 
     if let Err(e) = new_config.save_to_file(&state.config_path) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to save config: {e}")})),
-        )
-            .into_response();
+        let (status, msg) = match e {
+            ConfigError::Validation(ve) => {
+                (StatusCode::BAD_REQUEST, format!("invalid config: {ve}"))
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to save config: {e}"),
+            ),
+        };
+        return (status, Json(json!({"error": msg}))).into_response();
     }
 
     state.config.store(Arc::new(new_config));
@@ -821,21 +747,5 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn valid_mac_addresses() {
-        assert!(is_valid_mac("AA:BB:CC:DD:EE:FF"));
-        assert!(is_valid_mac("00:11:22:33:44:55"));
-        assert!(is_valid_mac("aa:bb:cc:dd:ee:ff"));
-    }
-
-    #[test]
-    fn invalid_mac_addresses() {
-        assert!(!is_valid_mac("not-a-mac"));
-        assert!(!is_valid_mac("AA:BB:CC:DD:EE"));
-        assert!(!is_valid_mac("AA:BB:CC:DD:EE:GG"));
-        assert!(!is_valid_mac("AABB.CCDD.EEFF"));
-        assert!(!is_valid_mac(""));
     }
 }

@@ -30,6 +30,7 @@ tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+validator = { version = "0.20", features = ["derive"] }
 xdg = "3.0"
 zbus = "5.13.2"
 zeroize = "1"

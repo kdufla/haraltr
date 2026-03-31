@@ -1,8 +1,9 @@
+active_device = "AA:BB:CC:DD:EE:FF"
+
 [daemon]
 mode = "both"
 
 [bluetooth]
-target_mac = "AA:BB:CC:DD:EE:FF"
 adapter_index = 0
 address_type = "br_edr"
 poll_interval_ms = 2000
@@ -25,3 +26,17 @@ enter_interval_ms = 3000
 [web]
 enabled = true
 port = 7878
+
+[[devices]]
+target_mac = "AA:BB:CC:DD:EE:FF"
+name = "My Phone"
+
+[[devices]]
+target_mac = "11:22:33:44:55:66"
+name = "My Watch"
+
+[devices.bluetooth]
+address_type = "le_public"
+
+[devices.proximity]
+rpl_threshold = 33.0

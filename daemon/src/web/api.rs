@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::AppState;
 use crate::{
-    config::{AddressTypeConfig, Config},
+    config::{BluetoothOverrides, Config, DeviceEntry, ProximityOverrides},
     web::bt_devices::list_devices,
 };
 
@@ -56,6 +56,69 @@ fn validate_config(config: &Config) -> Result<(), String> {
     if config.proximity.unlock_count == 0 {
         return Err("proximity.unlock_count must be > 0".into());
     }
+
+    let mut seen_macs = HashSet::new();
+    for (i, dev) in config.devices.iter().enumerate() {
+        if !is_valid_mac(&dev.target_mac) {
+            return Err(format!(
+                "devices[{i}]: invalid MAC address '{}'",
+                dev.target_mac
+            ));
+        }
+        if !seen_macs.insert(&dev.target_mac) {
+            return Err(format!(
+                "devices[{i}]: duplicate MAC address '{}'",
+                dev.target_mac
+            ));
+        }
+        if let Some(v) = dev.proximity.rpl_threshold
+            && v <= 0.0
+        {
+            return Err(format!("devices[{i}]: rpl_threshold must be positive"));
+        }
+        if let Some(v) = dev.proximity.kalman_q
+            && v <= 0.0
+        {
+            return Err(format!("devices[{i}]: kalman_q must be positive"));
+        }
+        if let Some(v) = dev.proximity.kalman_r
+            && v <= 0.0
+        {
+            return Err(format!("devices[{i}]: kalman_r must be positive"));
+        }
+        if let Some(v) = dev.bluetooth.poll_interval_ms
+            && v == 0
+        {
+            return Err(format!("devices[{i}]: poll_interval_ms must be > 0"));
+        }
+        if let Some(v) = dev.bluetooth.disconnect_poll_interval_ms
+            && v == 0
+        {
+            return Err(format!(
+                "devices[{i}]: disconnect_poll_interval_ms must be > 0"
+            ));
+        }
+        if let Some(v) = dev.proximity.lock_count
+            && v == 0
+        {
+            return Err(format!("devices[{i}]: lock_count must be > 0"));
+        }
+        if let Some(v) = dev.proximity.unlock_count
+            && v == 0
+        {
+            return Err(format!("devices[{i}]: unlock_count must be > 0"));
+        }
+    }
+
+    if let Some(ref active_mac) = config.active_device
+        && !config.devices.iter().any(|d| d.target_mac == *active_mac)
+    {
+        return Err(format!(
+            "active_device '{}' not found in devices list",
+            active_mac
+        ));
+    }
+
     Ok(())
 }
 
@@ -120,8 +183,8 @@ pub async fn put_config_handler(
             .into_response();
     }
 
-    let old_mac = current.bluetooth.target_mac.clone();
-    let mac_changed = old_mac != new_config.bluetooth.target_mac;
+    let old_mac = current.resolved_target_mac().map(str::to_string);
+    let mac_changed = old_mac != new_config.resolved_target_mac().map(str::to_string);
 
     let response = config_response(&new_config);
     state.config.store(Arc::new(new_config));
@@ -136,8 +199,13 @@ pub async fn put_config_handler(
 pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(json!({
-        "target_mac": config.bluetooth.target_mac,
-        "address_type": config.bluetooth.address_type,
+        "active_device": config.active_device,
+        "devices": config.devices.iter().map(|d| json!({
+            "target_mac": d.target_mac,
+            "name": d.name,
+            "bluetooth": d.bluetooth,
+            "proximity": d.proximity,
+        })).collect::<Vec<_>>(),
     }))
 }
 
@@ -156,7 +224,11 @@ pub async fn bt_devices_handler() -> impl IntoResponse {
 pub struct DeviceRequest {
     target_mac: String,
     #[serde(default)]
-    address_type: Option<AddressTypeConfig>,
+    name: Option<String>,
+    #[serde(default)]
+    bluetooth: BluetoothOverrides,
+    #[serde(default)]
+    proximity: ProximityOverrides,
 }
 
 pub async fn add_device_handler(
@@ -173,9 +245,29 @@ pub async fn add_device_handler(
 
     let current = state.config.load();
     let mut new_config = current.as_ref().clone();
-    new_config.bluetooth.target_mac = Some(body.target_mac);
-    if let Some(addr_type) = body.address_type {
-        new_config.bluetooth.address_type = addr_type;
+
+    if new_config
+        .devices
+        .iter()
+        .any(|d| d.target_mac == body.target_mac)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "device with this MAC already exists"})),
+        )
+            .into_response();
+    }
+
+    let is_first = new_config.devices.is_empty();
+    new_config.devices.push(DeviceEntry {
+        target_mac: body.target_mac.clone(),
+        name: body.name,
+        bluetooth: body.bluetooth,
+        proximity: body.proximity,
+    });
+
+    if is_first {
+        new_config.active_device = Some(body.target_mac);
     }
 
     if let Err(e) = new_config.save_to_file(&state.config_path) {
@@ -192,10 +284,34 @@ pub async fn add_device_handler(
     Json(json!({"ok": true})).into_response()
 }
 
-pub async fn remove_device_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+#[derive(Deserialize)]
+pub struct RemoveDeviceRequest {
+    target_mac: String,
+}
+
+pub async fn remove_device_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RemoveDeviceRequest>,
+) -> impl IntoResponse {
     let current = state.config.load();
     let mut new_config = current.as_ref().clone();
-    new_config.bluetooth.target_mac = None;
+
+    let before_len = new_config.devices.len();
+    new_config
+        .devices
+        .retain(|d| d.target_mac != body.target_mac);
+
+    if new_config.devices.len() == before_len {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "device not found"})),
+        )
+            .into_response();
+    }
+
+    if new_config.active_device.as_deref() == Some(&body.target_mac) {
+        new_config.active_device = None;
+    }
 
     if let Err(e) = new_config.save_to_file(&state.config_path) {
         return (
@@ -207,6 +323,51 @@ pub async fn remove_device_handler(State(state): State<Arc<AppState>>) -> impl I
 
     state.config.store(Arc::new(new_config));
     state.config_notify.notify_one();
+
+    Json(json!({"ok": true})).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct SetActiveDeviceRequest {
+    target_mac: String,
+}
+
+pub async fn set_active_device_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SetActiveDeviceRequest>,
+) -> impl IntoResponse {
+    let current = state.config.load();
+    let mut new_config = current.as_ref().clone();
+
+    if !new_config
+        .devices
+        .iter()
+        .any(|d| d.target_mac == body.target_mac)
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "device not found in devices list"})),
+        )
+            .into_response();
+    }
+
+    let old_mac = current.resolved_target_mac().map(str::to_string);
+    new_config.active_device = Some(body.target_mac);
+    let new_mac = new_config.resolved_target_mac().map(str::to_string);
+    let mac_changed = old_mac != new_mac;
+
+    if let Err(e) = new_config.save_to_file(&state.config_path) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("failed to save config: {e}")})),
+        )
+            .into_response();
+    }
+
+    state.config.store(Arc::new(new_config));
+    if mac_changed {
+        state.config_notify.notify_one();
+    }
 
     Json(json!({"ok": true})).into_response()
 }
@@ -270,6 +431,10 @@ mod tests {
                 get(get_devices_handler)
                     .post(add_device_handler)
                     .delete(remove_device_handler),
+            )
+            .route(
+                "/api/devices/active",
+                axum::routing::put(set_active_device_handler),
             )
             .route("/api/logout", post(logout_handler))
             .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(
@@ -451,9 +616,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_devices_returns_target() {
-        let mut config = Config::default();
-        config.bluetooth.target_mac = Some("AA:BB:CC:DD:EE:FF".into());
+    async fn get_devices_returns_list() {
+        let mut config = Config {
+            active_device: Some("AA:BB:CC:DD:EE:FF".into()),
+            ..Default::default()
+        };
+        config.devices.push(DeviceEntry {
+            target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            name: Some("Phone".into()),
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
         let state = test_state_with_config_path(config, PathBuf::from("/tmp/test-config.toml"));
         let token = state.create_session();
         let app = test_router(state);
@@ -465,8 +638,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let json = body_json(resp).await;
-        assert_eq!(json["target_mac"], "AA:BB:CC:DD:EE:FF");
-        assert_eq!(json["address_type"], "br_edr");
+        assert_eq!(json["active_device"], "AA:BB:CC:DD:EE:FF");
+        assert_eq!(json["devices"].as_array().unwrap().len(), 1);
+        assert_eq!(json["devices"][0]["target_mac"], "AA:BB:CC:DD:EE:FF");
+        assert_eq!(json["devices"][0]["name"], "Phone");
     }
 
     #[tokio::test]
@@ -495,10 +670,46 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        assert_eq!(
-            state.config.load().bluetooth.target_mac.as_deref(),
-            Some("AA:BB:CC:DD:EE:FF")
-        );
+        let cfg = state.config.load();
+        assert_eq!(cfg.devices.len(), 1);
+        assert_eq!(cfg.devices[0].target_mac, "AA:BB:CC:DD:EE:FF");
+        // First device becomes active
+        assert_eq!(cfg.active_device.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn add_device_duplicate_mac_returns_409() {
+        let dir = std::env::temp_dir().join("haraltr_test_add_device_dup");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+        let mut config = Config::default();
+        config.devices.push(DeviceEntry {
+            target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            name: None,
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
+        config.save_to_file(&path).unwrap();
+
+        let state = test_state_with_config_path(config, path.clone());
+        let token = state.create_session();
+        let app = test_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/devices")
+                    .header("content-type", "application/json")
+                    .header("cookie", format!("session={token}"))
+                    .body(Body::from(r#"{"target_mac":"AA:BB:CC:DD:EE:FF"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -525,12 +736,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_device_clears_target() {
+    async fn remove_device_removes_from_list() {
         let dir = std::env::temp_dir().join("haraltr_test_remove_device");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("config.toml");
-        let mut config = Config::default();
-        config.bluetooth.target_mac = Some("AA:BB:CC:DD:EE:FF".into());
+        let mut config = Config {
+            active_device: Some("AA:BB:CC:DD:EE:FF".into()),
+            ..Default::default()
+        };
+        config.devices.push(DeviceEntry {
+            target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            name: None,
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
         config.save_to_file(&path).unwrap();
 
         let state = test_state_with_config_path(config, path.clone());
@@ -542,15 +761,64 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/api/devices")
+                    .header("content-type", "application/json")
                     .header("cookie", format!("session={token}"))
-                    .body(Body::empty())
+                    .body(Body::from(r#"{"target_mac":"AA:BB:CC:DD:EE:FF"}"#))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        assert!(state.config.load().bluetooth.target_mac.is_none());
+        let cfg = state.config.load();
+        assert!(cfg.devices.is_empty());
+        assert!(cfg.active_device.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn set_active_device() {
+        let dir = std::env::temp_dir().join("haraltr_test_set_active");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+        let mut config = Config::default();
+        config.devices.push(DeviceEntry {
+            target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            name: Some("Phone".into()),
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
+        config.devices.push(DeviceEntry {
+            target_mac: "11:22:33:44:55:66".into(),
+            name: Some("Watch".into()),
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
+        config.save_to_file(&path).unwrap();
+
+        let state = test_state_with_config_path(config, path.clone());
+        let token = state.create_session();
+        let app = test_router(state.clone());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/devices/active")
+                    .header("content-type", "application/json")
+                    .header("cookie", format!("session={token}"))
+                    .body(Body::from(r#"{"target_mac":"11:22:33:44:55:66"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        assert_eq!(
+            state.config.load().active_device.as_deref(),
+            Some("11:22:33:44:55:66")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

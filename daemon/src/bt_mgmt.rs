@@ -16,11 +16,12 @@ pub struct BtMgmt {
 }
 
 impl BtMgmt {
-    pub fn new(bt_config: &BluetoothConfig, prox_config: &ProximityConfig) -> Result<Self> {
-        let target_mac: Address = bt_config
-            .target_mac
-            .as_deref()
-            .expect("target_mac must be set")
+    pub fn new(
+        target_mac: &str,
+        bt_config: &BluetoothConfig,
+        prox_config: &ProximityConfig,
+    ) -> Result<Self> {
+        let target_mac: Address = target_mac
             .parse::<bdaddr::Address>()
             .expect("invalid target MAC address")
             .into();

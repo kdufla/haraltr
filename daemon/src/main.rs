@@ -46,18 +46,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load()?;
     let config_path = config::config_path()?;
 
-    if config.bluetooth.target_mac.is_none() {
-        warn!("target_mac is not set — waiting for config reload via SIGHUP");
+    let target_mac = config.resolved_target_mac().map(String::from);
+    let bt = config.resolved_bluetooth();
+    let prox = config.resolved_proximity();
+
+    if target_mac.is_none() {
+        warn!("no active device set — waiting for config reload via SIGHUP");
     }
 
     info!(
-        target_mac = config
-            .bluetooth
-            .target_mac
-            .as_deref()
-            .unwrap_or("<not set>"),
-        poll_ms = config.bluetooth.poll_interval_ms,
-        rpl_threshold = config.proximity.rpl_threshold,
+        target_mac = target_mac.as_deref().unwrap_or("<not set>"),
+        poll_ms = bt.poll_interval_ms,
+        rpl_threshold = prox.rpl_threshold,
         "config loaded"
     );
 
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             raw_rpl: None,
             state: ProximityPhase::Disconnected,
             connected: false,
-            target_mac: config.load().bluetooth.target_mac.clone(),
+            target_mac: config.load().resolved_target_mac().map(String::from),
             started_at: daemon_start,
         }),
         config_notify: tokio::sync::Notify::new(),
@@ -95,8 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("daemon started");
 
     'daemon: loop {
-        while config.load().bluetooth.target_mac.is_none() {
-            info!("target_mac not set, waiting for config reload");
+        while config.load().resolved_target_mac().is_none() {
+            info!("no active device set, waiting for config reload");
             tokio::select! {
                 _ = sigterm.recv() => break 'daemon,
                 _ = sigint.recv() => break 'daemon,
@@ -114,14 +114,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let cfg = config.load();
-        let target_mac = cfg.bluetooth.target_mac.clone().unwrap();
+        let target_mac = cfg.resolved_target_mac().unwrap().to_string();
+        let bt_cfg = cfg.resolved_bluetooth();
+        let prox_cfg = cfg.resolved_proximity();
         info!("monitoring {target_mac}");
 
-        let mut bt = BtMgmt::new(&cfg.bluetooth, &cfg.proximity)?;
-        let mut state = State::new(&cfg.proximity);
-        let mut interval = time::interval(Duration::from_millis(cfg.bluetooth.poll_interval_ms));
-        let mut prev_kalman_q = cfg.proximity.kalman_q;
-        let mut prev_kalman_r = cfg.proximity.kalman_r;
+        let mut bt = BtMgmt::new(&target_mac, &bt_cfg, &prox_cfg)?;
+        let mut state = State::new(&prox_cfg);
+        let mut interval = time::interval(Duration::from_millis(bt_cfg.poll_interval_ms));
+        let mut prev_kalman_q = prox_cfg.kalman_q;
+        let mut prev_kalman_r = prox_cfg.kalman_r;
 
         loop {
             tokio::select! {
@@ -143,15 +145,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let cfg = config.load();
-            if cfg.proximity.kalman_q != prev_kalman_q || cfg.proximity.kalman_r != prev_kalman_r {
+            let prox_cfg = cfg.resolved_proximity();
+            if prox_cfg.kalman_q != prev_kalman_q || prox_cfg.kalman_r != prev_kalman_r {
                 info!(
-                    kalman_q = cfg.proximity.kalman_q,
-                    kalman_r = cfg.proximity.kalman_r,
+                    kalman_q = prox_cfg.kalman_q,
+                    kalman_r = prox_cfg.kalman_r,
                     "kalman parameters updated"
                 );
-                bt.update_kalman_params(cfg.proximity.kalman_q, cfg.proximity.kalman_r);
-                prev_kalman_q = cfg.proximity.kalman_q;
-                prev_kalman_r = cfg.proximity.kalman_r;
+                bt.update_kalman_params(prox_cfg.kalman_q, prox_cfg.kalman_r);
+                prev_kalman_q = prox_cfg.kalman_q;
+                prev_kalman_r = prox_cfg.kalman_r;
             }
 
             let reading = match bt.relative_path_loss().await {
@@ -190,11 +193,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let is_disconnected = state.is_disconnected();
 
             if was_disconnected != is_disconnected {
-                let cfg = config.load();
+                let bt_cfg = config.load().resolved_bluetooth();
                 let target_ms = if is_disconnected {
-                    cfg.bluetooth.disconnect_poll_interval_ms
+                    bt_cfg.disconnect_poll_interval_ms
                 } else {
-                    cfg.bluetooth.poll_interval_ms
+                    bt_cfg.poll_interval_ms
                 };
                 interval = time::interval(Duration::from_millis(target_ms));
             }

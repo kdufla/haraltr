@@ -66,8 +66,6 @@ pub enum DisconnectActionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BluetoothConfig {
     #[serde(default)]
-    pub target_mac: Option<String>,
-    #[serde(default)]
     pub adapter_index: u16,
     #[serde(default)]
     pub address_type: AddressTypeConfig,
@@ -80,7 +78,6 @@ pub struct BluetoothConfig {
 impl Default for BluetoothConfig {
     fn default() -> Self {
         Self {
-            target_mac: None,
             adapter_index: 0,
             address_type: AddressTypeConfig::default(),
             poll_interval_ms: default_poll_interval_ms(),
@@ -229,6 +226,47 @@ pub struct DaemonConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BluetoothOverrides {
+    #[serde(default)]
+    pub adapter_index: Option<u16>,
+    #[serde(default)]
+    pub address_type: Option<AddressTypeConfig>,
+    #[serde(default)]
+    pub poll_interval_ms: Option<u64>,
+    #[serde(default)]
+    pub disconnect_poll_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProximityOverrides {
+    #[serde(default)]
+    pub rpl_threshold: Option<f64>,
+    #[serde(default)]
+    pub lock_count: Option<u32>,
+    #[serde(default)]
+    pub unlock_count: Option<u32>,
+    #[serde(default)]
+    pub kalman_q: Option<f64>,
+    #[serde(default)]
+    pub kalman_r: Option<f64>,
+    #[serde(default)]
+    pub kalman_initial: Option<f64>,
+    #[serde(default)]
+    pub disconnect_action: Option<DisconnectActionConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceEntry {
+    pub target_mac: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub bluetooth: BluetoothOverrides,
+    #[serde(default)]
+    pub proximity: ProximityOverrides,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub daemon: DaemonConfig,
@@ -240,9 +278,69 @@ pub struct Config {
     pub wake: WakeConfig,
     #[serde(default)]
     pub web: WebConfig,
+    #[serde(default)]
+    pub active_device: Option<String>,
+    #[serde(default)]
+    pub devices: Vec<DeviceEntry>,
 }
 
 impl Config {
+    pub fn active_device_entry(&self) -> Option<&DeviceEntry> {
+        let mac = self.active_device.as_deref()?;
+        self.devices.iter().find(|d| d.target_mac == mac)
+    }
+
+    pub fn resolved_target_mac(&self) -> Option<&str> {
+        self.active_device_entry().map(|d| d.target_mac.as_str())
+    }
+
+    pub fn resolved_bluetooth(&self) -> BluetoothConfig {
+        if let Some(active_device) = self.active_device_entry() {
+            let BluetoothOverrides {
+                adapter_index,
+                address_type,
+                poll_interval_ms,
+                disconnect_poll_interval_ms,
+            } = &active_device.bluetooth;
+
+            BluetoothConfig {
+                adapter_index: adapter_index.unwrap_or(self.bluetooth.adapter_index),
+                address_type: address_type.unwrap_or(self.bluetooth.address_type),
+                poll_interval_ms: poll_interval_ms.unwrap_or(self.bluetooth.poll_interval_ms),
+                disconnect_poll_interval_ms: disconnect_poll_interval_ms
+                    .unwrap_or(self.bluetooth.disconnect_poll_interval_ms),
+            }
+        } else {
+            self.bluetooth.clone()
+        }
+    }
+
+    pub fn resolved_proximity(&self) -> ProximityConfig {
+        if let Some(active_device) = self.active_device_entry() {
+            let ProximityOverrides {
+                rpl_threshold,
+                lock_count,
+                unlock_count,
+                kalman_q,
+                kalman_r,
+                kalman_initial,
+                disconnect_action,
+            } = &active_device.proximity;
+
+            ProximityConfig {
+                rpl_threshold: rpl_threshold.unwrap_or(self.proximity.rpl_threshold),
+                lock_count: lock_count.unwrap_or(self.proximity.lock_count),
+                unlock_count: unlock_count.unwrap_or(self.proximity.unlock_count),
+                kalman_q: kalman_q.unwrap_or(self.proximity.kalman_q),
+                kalman_r: kalman_r.unwrap_or(self.proximity.kalman_r),
+                kalman_initial: kalman_initial.unwrap_or(self.proximity.kalman_initial),
+                disconnect_action: (*disconnect_action).unwrap_or(self.proximity.disconnect_action),
+            }
+        } else {
+            self.proximity.clone()
+        }
+    }
+
     pub fn load() -> Result<Self, ConfigError> {
         let path = ensure_config_file()?;
         info!("loading config from {}", path.display());
@@ -305,7 +403,6 @@ mod tests {
     fn empty_toml_gives_all_defaults() {
         let config: Config = toml::from_str("").unwrap();
         let defaults = Config::default();
-        assert_eq!(config.bluetooth.target_mac, defaults.bluetooth.target_mac);
         assert_eq!(
             config.bluetooth.adapter_index,
             defaults.bluetooth.adapter_index
@@ -321,26 +418,27 @@ mod tests {
         assert_eq!(config.proximity.lock_count, defaults.proximity.lock_count);
         assert_eq!(config.proximity.kalman_q, defaults.proximity.kalman_q);
         assert_eq!(config.wake.duration_secs, defaults.wake.duration_secs);
+        assert!(config.active_device.is_none());
+        assert!(config.devices.is_empty());
     }
 
     #[test]
     fn partial_toml_fills_defaults() {
         let toml_str = r#"
-[bluetooth]
+active_device = "AA:BB:CC:DD:EE:FF"
+
+[[devices]]
 target_mac = "AA:BB:CC:DD:EE:FF"
 
 [proximity]
 rpl_threshold = 20.0
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(
-            config.bluetooth.target_mac.as_deref(),
-            Some("AA:BB:CC:DD:EE:FF")
-        );
-        assert_eq!(config.bluetooth.poll_interval_ms, 2000); // default
+        assert_eq!(config.resolved_target_mac(), Some("AA:BB:CC:DD:EE:FF"));
+        assert_eq!(config.bluetooth.poll_interval_ms, 2000);
         assert_eq!(config.proximity.rpl_threshold, 20.0);
-        assert_eq!(config.proximity.lock_count, 5); // default
-        assert_eq!(config.wake.duration_secs, 3); // default
+        assert_eq!(config.proximity.lock_count, 5);
+        assert_eq!(config.wake.duration_secs, 3);
     }
 
     #[test]
@@ -349,14 +447,12 @@ rpl_threshold = 20.0
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
         assert_eq!(
-            config.bluetooth.target_mac,
-            deserialized.bluetooth.target_mac
-        );
-        assert_eq!(
             config.proximity.rpl_threshold,
             deserialized.proximity.rpl_threshold
         );
         assert_eq!(config.wake.duration_secs, deserialized.wake.duration_secs);
+        assert_eq!(config.active_device, deserialized.active_device);
+        assert_eq!(config.devices.len(), deserialized.devices.len());
     }
 
     #[test]
@@ -364,9 +460,16 @@ rpl_threshold = 20.0
         let dir = std::env::temp_dir().join("haraltr_test_config");
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("test_config.toml");
-
-        let mut config = Config::default();
-        config.bluetooth.target_mac = Some("11:22:33:44:55:66".to_string());
+        let mut config = Config {
+            active_device: Some("11:22:33:44:55:66".into()),
+            ..Default::default()
+        };
+        config.devices.push(DeviceEntry {
+            target_mac: "11:22:33:44:55:66".into(),
+            name: None,
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
         config.proximity.rpl_threshold = 25.0;
 
         config.save_to_file(&path).unwrap();
@@ -374,10 +477,7 @@ rpl_threshold = 20.0
         let contents = fs::read_to_string(&path).unwrap();
         let loaded: Config = toml::from_str(&contents).unwrap();
 
-        assert_eq!(
-            loaded.bluetooth.target_mac.as_deref(),
-            Some("11:22:33:44:55:66")
-        );
+        assert_eq!(loaded.resolved_target_mac(), Some("11:22:33:44:55:66"));
         assert_eq!(loaded.proximity.rpl_threshold, 25.0);
 
         let _ = fs::remove_dir_all(&dir);
@@ -434,5 +534,157 @@ disconnect_action = "unlock"
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
         assert!(deserialized.web.password_hash.is_none());
+    }
+
+    #[test]
+    fn no_devices_returns_global_config() {
+        let config: Config = toml::from_str(
+            r#"
+[bluetooth]
+poll_interval_ms = 500
+
+[proximity]
+rpl_threshold = 20.0
+"#,
+        )
+        .unwrap();
+
+        assert!(config.active_device_entry().is_none());
+        assert!(config.resolved_target_mac().is_none());
+        let bt = config.resolved_bluetooth();
+        assert_eq!(bt.poll_interval_ms, 500);
+        let prox = config.resolved_proximity();
+        assert_eq!(prox.rpl_threshold, 20.0);
+    }
+
+    #[test]
+    fn active_device_overrides_applied() {
+        let config: Config = toml::from_str(
+            r#"
+active_device = "11:22:33:44:55:66"
+
+[bluetooth]
+adapter_index = 0
+address_type = "br_edr"
+poll_interval_ms = 2000
+
+[proximity]
+rpl_threshold = 15.0
+kalman_q = 0.1
+
+[[devices]]
+target_mac = "11:22:33:44:55:66"
+name = "Phone"
+
+[devices.bluetooth]
+adapter_index = 1
+address_type = "le_public"
+
+[devices.proximity]
+rpl_threshold = 13.0
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.resolved_target_mac(), Some("11:22:33:44:55:66"));
+        let bt = config.resolved_bluetooth();
+        assert_eq!(bt.adapter_index, 1);
+        assert_eq!(bt.address_type, AddressTypeConfig::LePublic);
+        assert_eq!(bt.poll_interval_ms, 2000);
+
+        let prox = config.resolved_proximity();
+        assert_eq!(prox.rpl_threshold, 13.0);
+        assert_eq!(prox.kalman_q, 0.1);
+    }
+
+    #[test]
+    fn active_device_no_overrides_uses_globals() {
+        let config: Config = toml::from_str(
+            r#"
+active_device = "AA:BB:CC:DD:EE:FF"
+
+[bluetooth]
+adapter_index = 0
+poll_interval_ms = 2000
+
+[proximity]
+rpl_threshold = 15.0
+
+[[devices]]
+target_mac = "AA:BB:CC:DD:EE:FF"
+name = "Watch"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.resolved_target_mac(), Some("AA:BB:CC:DD:EE:FF"));
+        let bt = config.resolved_bluetooth();
+        assert_eq!(bt.adapter_index, 0);
+        assert_eq!(bt.poll_interval_ms, 2000);
+        let prox = config.resolved_proximity();
+        assert_eq!(prox.rpl_threshold, 15.0);
+    }
+
+    #[test]
+    fn active_device_nonexistent_mac_returns_none() {
+        let config: Config = toml::from_str(
+            r#"
+active_device = "FF:FF:FF:FF:FF:FF"
+
+[bluetooth]
+poll_interval_ms = 2000
+
+[[devices]]
+target_mac = "11:22:33:44:55:66"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.active_device_entry().is_none());
+        assert!(config.resolved_target_mac().is_none());
+    }
+
+    #[test]
+    fn devices_round_trip() {
+        let mut config = Config {
+            active_device: Some("11:22:33:44:55:66".into()),
+            ..Default::default()
+        };
+        config.devices = vec![
+            DeviceEntry {
+                target_mac: "11:22:33:44:55:66".into(),
+                name: Some("Phone".into()),
+                bluetooth: BluetoothOverrides {
+                    adapter_index: Some(1),
+                    address_type: Some(AddressTypeConfig::LePublic),
+                    ..Default::default()
+                },
+                proximity: ProximityOverrides {
+                    rpl_threshold: Some(13.0),
+                    ..Default::default()
+                },
+            },
+            DeviceEntry {
+                target_mac: "AA:BB:CC:DD:EE:FF".into(),
+                name: None,
+                bluetooth: BluetoothOverrides::default(),
+                proximity: ProximityOverrides::default(),
+            },
+        ];
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(
+            deserialized.active_device.as_deref(),
+            Some("11:22:33:44:55:66")
+        );
+        assert_eq!(deserialized.devices.len(), 2);
+        assert_eq!(deserialized.devices[0].target_mac, "11:22:33:44:55:66");
+        assert_eq!(deserialized.devices[0].name.as_deref(), Some("Phone"));
+        assert_eq!(deserialized.devices[0].bluetooth.adapter_index, Some(1));
+        assert_eq!(deserialized.devices[0].proximity.rpl_threshold, Some(13.0));
+        assert_eq!(deserialized.devices[1].target_mac, "AA:BB:CC:DD:EE:FF");
+        assert!(deserialized.devices[1].name.is_none());
     }
 }

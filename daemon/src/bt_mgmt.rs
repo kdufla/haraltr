@@ -2,10 +2,7 @@ use btmgmt::{Client, client::Result, command::GetConnectionInformation};
 use btmgmt_packet::{Address, AddressType};
 use tracing::{debug, trace};
 
-use crate::{
-    config::{AddressTypeConfig, BluetoothConfig, ProximityConfig},
-    kalman::KalmanFilter,
-};
+use crate::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
 
 pub struct BtMgmt {
     client: Client,
@@ -65,5 +62,36 @@ impl BtMgmt {
         trace!(rssi, tx_power, "connection info");
 
         Ok((rssi, tx_power))
+    }
+}
+
+struct KalmanFilter {
+    x: f64, // Estimate
+    p: f64, // Covariance of the estimate
+    q: f64, // Covariance of the process noise
+    r: f64, // Covariance of the observation noise
+}
+
+impl KalmanFilter {
+    fn new(initial_value: f64, q: f64, r: f64) -> Self {
+        Self {
+            x: initial_value,
+            p: 1.0,
+            q,
+            r,
+        }
+    }
+
+    fn update(&mut self, z: f64) -> f64 {
+        self.p += self.q;
+        let k = self.p / (self.p + self.r);
+        self.x += k * (z - self.x);
+        self.p *= 1.0 - k;
+        self.x
+    }
+
+    fn update_params(&mut self, q: f64, r: f64) {
+        self.q = q;
+        self.r = r;
     }
 }

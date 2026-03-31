@@ -1,6 +1,9 @@
 use tracing::{debug, info};
 
-use crate::config::{DisconnectActionConfig, ProximityConfig};
+use crate::{
+    config::{DisconnectActionConfig, ProximityConfig},
+    state::ProximityPhase,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
@@ -56,11 +59,11 @@ impl State {
         matches!(self.phase, Phase::Disconnected)
     }
 
-    pub fn proximity_phase(&self) -> crate::web::ProximityPhase {
+    pub fn proximity_phase(&self) -> ProximityPhase {
         match self.phase {
-            Phase::Near { .. } => crate::web::ProximityPhase::Near,
-            Phase::Far { .. } => crate::web::ProximityPhase::Far,
-            Phase::Disconnected => crate::web::ProximityPhase::Disconnected,
+            Phase::Near { .. } => ProximityPhase::Near,
+            Phase::Far { .. } => ProximityPhase::Far,
+            Phase::Disconnected => ProximityPhase::Disconnected,
         }
     }
 

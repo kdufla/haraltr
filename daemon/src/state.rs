@@ -4,7 +4,7 @@ use arc_swap::ArcSwap;
 use rand::Rng;
 use serde::Serialize;
 
-use crate::{config::Config, web::auth::SESSION_DURATION};
+use crate::{config::Config, web::auth::AUTH_SESSION_DURATION};
 
 pub struct DaemonStatus {
     pub rpl: Option<f64>,
@@ -36,7 +36,7 @@ impl std::fmt::Display for ProximityPhase {
 pub struct AppState {
     pub config: Arc<ArcSwap<Config>>,
     pub config_path: PathBuf,
-    pub sessions: std::sync::Mutex<HashMap<String, Instant>>,
+    pub web_sessions: std::sync::Mutex<HashMap<String, Instant>>,
     pub daemon_status: ArcSwap<DaemonStatus>,
     pub config_notify: tokio::sync::Notify,
 }
@@ -47,14 +47,17 @@ impl AppState {
         rand::rng().fill_bytes(&mut bytes);
         let token = hex::encode(bytes);
 
-        let expiry = Instant::now() + SESSION_DURATION;
-        self.sessions.lock().unwrap().insert(token.clone(), expiry);
+        let expiry = Instant::now() + AUTH_SESSION_DURATION;
+        self.web_sessions
+            .lock()
+            .unwrap()
+            .insert(token.clone(), expiry);
 
         token
     }
 
     pub fn validate_session(&self, token: &str) -> bool {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.web_sessions.lock().unwrap();
         match sessions.get(token) {
             Some(&expiry) if expiry > Instant::now() => true,
             Some(_) => {
@@ -66,6 +69,6 @@ impl AppState {
     }
 
     pub fn remove_session(&self, token: &str) {
-        self.sessions.lock().unwrap().remove(token);
+        self.web_sessions.lock().unwrap().remove(token);
     }
 }

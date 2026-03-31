@@ -1,6 +1,6 @@
 use zbus::{Connection, Proxy, Result, zvariant::OwnedObjectPath};
 
-pub struct LogindSession(Proxy<'static>);
+pub(super) struct LogindSession(Proxy<'static>);
 
 impl LogindSession {
     pub async fn new(connection: Connection, object_path: OwnedObjectPath) -> Result<Self> {

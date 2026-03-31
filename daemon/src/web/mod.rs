@@ -1,8 +1,6 @@
 pub mod api;
 pub mod auth;
 pub mod bt_devices;
-pub mod state;
-
 use std::sync::Arc;
 
 use api::{
@@ -16,11 +14,13 @@ use axum::{
     http::{StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use rust_embed::RustEmbed;
-pub use state::{AppState, DaemonStatus, ProximityPhase};
+// pub use state::{AppState, DaemonStatus, ProximityPhase};
 use tracing::info;
+
+use crate::state::AppState;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -61,7 +61,7 @@ pub async fn serve(state: Arc<AppState>) {
                 .post(add_device_handler)
                 .delete(remove_device_handler),
         )
-        .route("/api/devices/active", axum::routing::put(set_active_device_handler))
+        .route("/api/devices/active", put(set_active_device_handler))
         .route("/api/bt-devices", get(bt_devices_handler))
         .route("/api/logout", post(logout_handler))
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(

@@ -1,7 +1,7 @@
 use tracing::{debug, error, info};
 use zbus::{Connection, Proxy, Result, zvariant, zvariant::OwnedObjectPath};
 
-use crate::session::logind_session::LogindSession;
+use crate::logind::session::LogindSession;
 
 #[derive(zvariant::Type, serde::Deserialize, Debug)]
 struct SessionInfo {

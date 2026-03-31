@@ -11,7 +11,7 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-use crate::web::{AppState, ProximityPhase};
+use crate::state::{AppState, ProximityPhase};
 
 pub fn spawn_ipc_listener(app_state: &Arc<AppState>) {
     let state = app_state.clone();

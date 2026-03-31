@@ -16,13 +16,13 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
 
-use super::AppState;
+use crate::state::AppState;
 
-const SESSION_DURATION_HOURS: u64 = 24;
-pub const SESSION_DURATION: Duration = Duration::from_hours(SESSION_DURATION_HOURS);
 const SESSION_COOKIE: &str = "session";
+const SESSION_DURATION_HOURS: u64 = 24;
+pub const AUTH_SESSION_DURATION: Duration = Duration::from_hours(SESSION_DURATION_HOURS);
 
-pub fn verify_password(password: &str, hash: &str) -> bool {
+pub(super) fn verify_password(password: &str, hash: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(hash) else {
         return false;
     };
@@ -31,7 +31,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-pub struct AuthUser;
+pub(super) struct AuthUser;
 
 impl FromRequestParts<Arc<AppState>> for AuthUser {
     type Rejection = StatusCode;
@@ -58,11 +58,11 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
 }
 
 #[derive(Deserialize)]
-pub struct LoginRequest {
+pub(super) struct LoginRequest {
     password: String,
 }
 
-pub async fn login_handler(
+pub(super) async fn login_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
@@ -97,7 +97,7 @@ pub async fn login_handler(
     (jar, Json(json!({"ok": true}))).into_response()
 }
 
-pub async fn logout_handler(
+pub(super) async fn logout_handler(
     _auth: AuthUser,
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
@@ -129,7 +129,10 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::{config::Config, web::state::AppState};
+    use crate::{
+        config::Config,
+        state::{AppState, DaemonStatus, ProximityPhase},
+    };
 
     fn test_state(password_hash: Option<String>) -> Arc<AppState> {
         let mut config = Config::default();
@@ -137,11 +140,11 @@ mod tests {
         Arc::new(AppState {
             config: Arc::new(ArcSwap::from_pointee(config)),
             config_path: PathBuf::from("/tmp/test-config.toml"),
-            sessions: std::sync::Mutex::new(HashMap::new()),
-            daemon_status: ArcSwap::from_pointee(crate::web::DaemonStatus {
+            web_sessions: std::sync::Mutex::new(HashMap::new()),
+            daemon_status: ArcSwap::from_pointee(DaemonStatus {
                 rpl: None,
                 raw_rpl: None,
-                state: crate::web::ProximityPhase::Disconnected,
+                state: ProximityPhase::Disconnected,
                 connected: false,
                 target_mac: None,
                 started_at: Instant::now(),
@@ -176,7 +179,7 @@ mod tests {
         let token = state.create_session();
         assert_eq!(token.len(), 64);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
-        assert!(state.sessions.lock().unwrap().contains_key(&token));
+        assert!(state.web_sessions.lock().unwrap().contains_key(&token));
     }
 
     #[test]
@@ -198,12 +201,12 @@ mod tests {
         let token = "expired_token".to_string();
         let past_expiry = Instant::now() - Duration::from_secs(1);
         state
-            .sessions
+            .web_sessions
             .lock()
             .unwrap()
             .insert(token.clone(), past_expiry);
         assert!(!state.validate_session(&token));
-        assert!(!state.sessions.lock().unwrap().contains_key(&token));
+        assert!(!state.web_sessions.lock().unwrap().contains_key(&token));
     }
 
     fn test_router(state: Arc<AppState>) -> Router {
@@ -348,7 +351,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        assert!(!state_ref.sessions.lock().unwrap().contains_key(&token));
+        assert!(!state_ref.web_sessions.lock().unwrap().contains_key(&token));
     }
 
     #[tokio::test]

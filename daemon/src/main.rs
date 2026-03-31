@@ -2,10 +2,10 @@ mod bt_mgmt;
 mod config;
 mod input;
 mod ipc;
-mod kalman;
+mod logind;
 mod passwd;
 mod proximity;
-mod session;
+mod state;
 mod wake_up;
 mod web;
 
@@ -29,9 +29,8 @@ use crate::{
     config::{Config, DaemonMode},
     ipc::spawn_ipc_listener,
     proximity::{Action, Reading, State},
-    session::SessionController,
+    state::{AppState, DaemonStatus, ProximityPhase},
     wake_up::wake_screen,
-    web::{AppState, DaemonStatus, ProximityPhase},
 };
 
 #[tokio::main]
@@ -67,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         config: config.clone(),
         config_path: config_path.clone(),
-        sessions: std::sync::Mutex::new(HashMap::new()),
+        web_sessions: std::sync::Mutex::new(HashMap::new()),
         daemon_status: ArcSwap::from_pointee(DaemonStatus {
             rpl: None,
             raw_rpl: None,
@@ -90,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sighup = signal(SignalKind::hangup())?;
 
-    let session = SessionController::new().await?;
+    let logind_session = logind::SessionController::new().await?;
 
     info!("daemon started");
 
@@ -205,7 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
                 match action {
                     Action::Lock => {
-                        if let Err(e) = session.lock().await {
+                        if let Err(e) = logind_session.lock().await {
                             error!("lock failed: {e}");
                         }
                     }
@@ -219,7 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         {
                             error!("wake failed: {e}");
                         }
-                        if let Err(e) = session.unlock().await {
+                        if let Err(e) = logind_session.unlock().await {
                             error!("unlock failed: {e}");
                         }
                     }

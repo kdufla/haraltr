@@ -1,4 +1,4 @@
 mod controller;
-mod logind_session;
+mod session;
 
 pub use controller::SessionController;

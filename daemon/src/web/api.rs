@@ -5,11 +5,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use validator::Validate;
 
-use super::AppState;
 use crate::{
     config::{
         BluetoothOverrides, Config, ConfigError, DeviceEntry, ProximityOverrides, validate_mac,
     },
+    state::AppState,
     web::bt_devices::list_devices,
 };
 
@@ -34,7 +34,7 @@ fn deep_merge(base: &mut Value, patch: &Value) {
     }
 }
 
-pub async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
+pub(super) async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let status = state.daemon_status.load();
     let uptime = status.started_at.elapsed().as_secs();
     Json(json!({
@@ -47,12 +47,12 @@ pub async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-pub async fn get_config_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
+pub(super) async fn get_config_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(config_response(&config))
 }
 
-pub async fn put_config_handler(
+pub(super) async fn put_config_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
@@ -104,7 +104,7 @@ pub async fn put_config_handler(
     Json(response).into_response()
 }
 
-pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
+pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     Json(json!({
         "active_device": config.active_device,
@@ -117,7 +117,7 @@ pub async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Val
     }))
 }
 
-pub async fn bt_devices_handler() -> impl IntoResponse {
+pub(super) async fn bt_devices_handler() -> impl IntoResponse {
     match list_devices().await {
         Ok(devices) => Json(json!({ "devices": devices })).into_response(),
         Err(e) => (
@@ -129,7 +129,7 @@ pub async fn bt_devices_handler() -> impl IntoResponse {
 }
 
 #[derive(Deserialize, Validate)]
-pub struct DeviceRequest {
+pub(super) struct DeviceRequest {
     #[validate(custom(function = "validate_mac"))]
     target_mac: String,
     #[serde(default)]
@@ -142,7 +142,7 @@ pub struct DeviceRequest {
     proximity: ProximityOverrides,
 }
 
-pub async fn add_device_handler(
+pub(super) async fn add_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeviceRequest>,
 ) -> impl IntoResponse {
@@ -201,11 +201,11 @@ pub async fn add_device_handler(
 }
 
 #[derive(Deserialize)]
-pub struct RemoveDeviceRequest {
+pub(super) struct RemoveDeviceRequest {
     target_mac: String,
 }
 
-pub async fn remove_device_handler(
+pub(super) async fn remove_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RemoveDeviceRequest>,
 ) -> impl IntoResponse {
@@ -249,11 +249,11 @@ pub async fn remove_device_handler(
 }
 
 #[derive(Deserialize)]
-pub struct SetActiveDeviceRequest {
+pub(super) struct SetActiveDeviceRequest {
     target_mac: String,
 }
 
-pub async fn set_active_device_handler(
+pub(super) async fn set_active_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SetActiveDeviceRequest>,
 ) -> impl IntoResponse {
@@ -316,17 +316,15 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        web::{
-            auth::{AuthUser, login_handler, logout_handler},
-            state::{AppState, DaemonStatus, ProximityPhase},
-        },
+        state::{AppState, DaemonStatus, ProximityPhase},
+        web::auth::{AuthUser, login_handler, logout_handler},
     };
 
     fn test_state_with_config_path(config: Config, path: PathBuf) -> Arc<AppState> {
         Arc::new(AppState {
             config: Arc::new(ArcSwap::from_pointee(config)),
             config_path: path,
-            sessions: std::sync::Mutex::new(HashMap::new()),
+            web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: ArcSwap::from_pointee(DaemonStatus {
                 rpl: Some(12.3),
                 raw_rpl: Some(14.1),

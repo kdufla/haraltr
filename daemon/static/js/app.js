@@ -153,14 +153,33 @@ configForm.addEventListener("change", () => {
 
 
 const CHART_LEN = 60;
-const chartData = [[], [], []]; // [timestamps, filtered RPL, raw RPL]
-let chart = null;
+const deviceState = new Map(); // Map<mac, { chartData: [[], [], []], chart: uPlot }>
 const t0 = Date.now() / 1000;
 
-function initChart() {
-    const el = document.getElementById("rpl-chart");
+function getOrCreateDeviceCard(mac) {
+    if (deviceState.has(mac)) return deviceState.get(mac);
+
+    const idSuffix = mac.replaceAll(":", "-");
+    const card = document.createElement("div");
+    card.className = "device-card";
+    card.dataset.mac = mac;
+
+    const info = document.createElement("div");
+    info.className = "device-info";
+    info.innerHTML =
+        `<span>Target: <span id="mon-mac-${idSuffix}">—</span></span>` +
+        `<span>State: <span id="mon-state-${idSuffix}">—</span></span>` +
+        `<span>Connected: <span id="mon-connected-${idSuffix}">—</span></span>` +
+        `<span>RPL: <span id="mon-rpl-${idSuffix}">—</span></span>`;
+    card.appendChild(info);
+
+    const chartContainer = document.createElement("div");
+    card.appendChild(chartContainer);
+
+    document.getElementById("device-cards").appendChild(card);
+
     const opts = {
-        width: el.clientWidth || 600,
+        width: chartContainer.clientWidth || 600,
         height: 250,
         series: [
             {},
@@ -172,7 +191,12 @@ function initChart() {
             { label: "RPL" },
         ],
     };
-    chart = new uPlot(opts, [[], [], []], el);
+    const chartData = [[], [], []];
+    const chart = new uPlot(opts, [[], [], []], chartContainer);
+
+    const entry = { chartData, chart };
+    deviceState.set(mac, entry);
+    return entry;
 }
 
 async function fetchStatus() {
@@ -180,25 +204,40 @@ async function fetchStatus() {
         const res = await authFetch("/api/status");
         const data = await res.json();
 
-        // monitor text
-        document.getElementById("mon-mac").textContent = data.target_mac || "—";
-        document.getElementById("mon-state").textContent = data.state || "—";
-        document.getElementById("mon-connected").textContent = data.connected ? "yes" : "no";
-        document.getElementById("mon-rpl").textContent = data.rpl != null ? data.rpl.toFixed(1) : "—";
+        document.getElementById("mon-any-near").textContent = data.any_near ? "yes" : "no";
+        document.getElementById("mon-uptime").textContent = data.uptime_secs + "s";
 
-        // chart data
-        chartData[0].push(Date.now() / 1000 - t0);
-        chartData[1].push(data.rpl ?? null);
-        chartData[2].push(data.raw_rpl ?? null);
+        const activeMacs = new Set();
+        for (const device of data.devices || []) {
+            const mac = device.target_mac;
+            const { chartData, chart } = getOrCreateDeviceCard(mac);
+            const idSuffix = mac.replaceAll(":", "-");
 
-        if (chartData[0].length > CHART_LEN) {
-            chartData[0].shift();
-            chartData[1].shift();
-            chartData[2].shift();
+            document.getElementById(`mon-mac-${idSuffix}`).textContent = mac;
+            document.getElementById(`mon-state-${idSuffix}`).textContent = device.state || "—";
+            document.getElementById(`mon-connected-${idSuffix}`).textContent = device.connected ? "yes" : "no";
+            document.getElementById(`mon-rpl-${idSuffix}`).textContent = device.rpl != null ? device.rpl.toFixed(1) : "—";
+
+            chartData[0].push(Date.now() / 1000 - t0);
+            chartData[1].push(device.rpl ?? null);
+            chartData[2].push(device.raw_rpl ?? null);
+
+            if (chartData[0].length > CHART_LEN) {
+                chartData[0].shift();
+                chartData[1].shift();
+                chartData[2].shift();
+            }
+
+            chart.setData(chartData);
+            activeMacs.add(mac);
         }
 
-        if (chart) {
-            chart.setData(chartData);
+        for (const mac of deviceState.keys()) {
+            if (!activeMacs.has(mac)) {
+                const idSuffix = mac.replaceAll(":", "-");
+                document.querySelector(`[data-mac="${CSS.escape(mac)}"]`)?.remove();
+                deviceState.delete(mac);
+            }
         }
     } catch (e) {
         if (e.message !== "unauthorized") {
@@ -271,6 +310,5 @@ document.getElementById("refresh-devices-btn").addEventListener("click", loadDev
 loadConfig();
 loadDevices();
 loadCurrentTarget();
-initChart();
 fetchStatus();
 setInterval(fetchStatus, 1000);

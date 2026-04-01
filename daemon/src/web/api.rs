@@ -34,7 +34,6 @@ fn deep_merge(base: &mut Value, patch: &Value) {
     }
 }
 
-// TODO this returns tmp somewhat useless state
 pub(super) async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let status = state.daemon_status.lock().unwrap();
     let uptime = status.started_at.elapsed().as_secs();

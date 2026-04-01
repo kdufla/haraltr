@@ -12,11 +12,10 @@ mod web;
 
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };
 
-use arc_swap::ArcSwap;
 use common::IPC_SOCKET_PATH;
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -48,14 +47,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(devices = config.devices.len(), "config loaded");
 
-    let live_config = Arc::new(ArcSwap::from_pointee(config));
+    let live_config = Arc::new(RwLock::new(config));
     let daemon_start = Instant::now();
 
     let app_state = Arc::new(AppState {
         config: live_config.clone(),
         config_path: config_path.clone(),
         web_sessions: std::sync::Mutex::new(HashMap::new()),
-        daemon_status: ArcSwap::from_pointee(DaemonStatus {
+        daemon_status: Mutex::from(DaemonStatus {
             devices: HashMap::new(),
             any_near: true,
             started_at: daemon_start,
@@ -63,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_notify: tokio::sync::Notify::new(),
     });
 
-    let mode = live_config.load().daemon.mode;
+    let mode = live_config.read().unwrap().daemon.mode;
 
     spawn_web_server(&app_state);
     if matches!(mode, DaemonMode::Both | DaemonMode::PamOnly) {
@@ -79,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("daemon started");
 
     'daemon: loop {
-        let config = live_config.load();
+        let config = live_config.read().unwrap().clone();
         let devices = config.devices.clone();
 
         if devices.is_empty() {
@@ -90,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = sighup.recv() => {
                     info!("received SIGHUP, reloading config");
                     match Config::load() {
-                        Ok(new_config) => live_config.store(Arc::new(new_config)),
+                        Ok(new_config) => *live_config.write().unwrap() = new_config,
                         Err(e) => error!("failed to reload config: {e}"),
                     }
                 }
@@ -120,11 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut device_phases: HashMap<String, DeviceReport> = HashMap::new();
         let mut was_any_near = true; // start true to avoid spurious unlock on daemon start
 
-        app_state.daemon_status.store(Arc::new(DaemonStatus {
-            devices: HashMap::new(),
-            any_near: true,
-            started_at: daemon_start,
-        }));
+        app_state.reset_daemon_state();
 
         loop {
             tokio::select! {
@@ -134,24 +129,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     };
 
-                    device_phases.insert(report.target_mac.clone(), report);
+                    device_phases.insert(report.target_mac.clone(), report.clone());
 
                     let is_any_near = device_phases.values().any(|latest_report| latest_report.phase == ProximityPhase::Near);
 
-                    let device_map = device_phases.iter().map(|(mac, latest_report)| {
-                        (mac.clone(), DeviceStatus {
-                            rpl: latest_report.rpl,
-                            raw_rpl: latest_report.raw_rpl,
-                            phase: latest_report.phase,
-                            connected: latest_report.connected,
-                        })
-                    }).collect();
-
-                    app_state.daemon_status.store(Arc::new(DaemonStatus {
-                        devices: device_map,
-                        any_near: is_any_near,
-                        started_at: daemon_start,
-                    }));
+                    app_state.update_device(report.target_mac.clone(), DeviceStatus {
+                            rpl: report.rpl,
+                            raw_rpl: report.raw_rpl,
+                            phase: report.phase,
+                            connected: report.connected,
+                        }, is_any_near);
 
                     if matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
                         if was_any_near && !is_any_near {
@@ -161,10 +148,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else if !was_any_near && is_any_near {
                             info!("device near, unlocking");
-                            let cfg = live_config.load();
-                            let wake_duration = Duration::from_secs(cfg.wake.duration_secs);
-                            let mouse_interval = Duration::from_millis(cfg.wake.mouse_interval_ms);
-                            let enter_interval = Duration::from_millis(cfg.wake.enter_interval_ms);
+                            let (wake_duration, mouse_interval, enter_interval) = {
+                                let cfg = live_config.read().unwrap();
+                                (
+                                    Duration::from_secs(cfg.wake.duration_secs),
+                                    Duration::from_millis(cfg.wake.mouse_interval_ms),
+                                    Duration::from_millis(cfg.wake.enter_interval_ms),
+                                )
+                            };
                             if let Err(e) = wake_screen(wake_duration, mouse_interval, enter_interval).await {
                                 error!("wake failed: {e}");
                             }
@@ -186,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = sighup.recv() => {
                     info!("received SIGHUP, reloading config");
                     match Config::load() {
-                        Ok(new_cfg) => live_config.store(Arc::new(new_cfg)),
+                        Ok(new_cfg) => *live_config.write().unwrap() = new_cfg,
                         Err(e) => error!("failed to reload config: {e}"),
                     }
                     for h in &handles { h.abort(); }
@@ -207,7 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn spawn_web_server(app_state: &Arc<AppState>) {
-    let cfg = app_state.config.load();
+    let cfg = app_state.config.read().unwrap();
 
     if !cfg.web.enabled {
         info!("web server disabled in config");

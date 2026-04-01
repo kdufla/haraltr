@@ -66,7 +66,7 @@ pub(super) async fn login_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    let config = state.config.load();
+    let config = state.config.read().unwrap();
     let Some(ref hash) = config.web.password_hash else {
         error!("web server is running without password hash in config");
         return (
@@ -123,7 +123,6 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use arc_swap::ArcSwap;
     use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
     use axum::{Router, body::Body, http::Request, middleware, routing::post};
     use tower::ServiceExt;
@@ -138,10 +137,10 @@ mod tests {
         let mut config = Config::default();
         config.web.password_hash = password_hash;
         Arc::new(AppState {
-            config: Arc::new(ArcSwap::from_pointee(config)),
+            config: Arc::new(std::sync::RwLock::new(config)),
             config_path: PathBuf::from("/tmp/test-config.toml"),
             web_sessions: std::sync::Mutex::new(HashMap::new()),
-            daemon_status: ArcSwap::from_pointee(DaemonStatus {
+            daemon_status: std::sync::Mutex::new(DaemonStatus {
                 devices: HashMap::new(),
                 any_near: false,
                 started_at: Instant::now(),

@@ -72,7 +72,7 @@ pub async fn serve(state: Arc<AppState>) {
         .fallback(get(static_handler))
         .with_state(state.clone());
 
-    let port = state.config.load().web.port;
+    let port = state.config.read().unwrap().web.port;
     let addr = format!("127.0.0.1:{port}");
 
     let listener = tokio::net::TcpListener::bind(&addr)

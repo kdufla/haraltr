@@ -74,25 +74,27 @@ async fn handle_connection(
     }
 
     // TODO multi-device daemon status. This is a tmp fix just to make it run.
-    let status = app_state.daemon_status.load();
-    let proximity = if status.any_near {
-        ProximityStatus::Near
-    } else if status
-        .devices
-        .values()
-        .any(|d| d.phase == ProximityPhase::Far)
-    {
-        ProximityStatus::Far
-    } else {
-        ProximityStatus::Disconnected
+    let (proximity, rpl) = {
+        let status = app_state.daemon_status.lock().unwrap();
+        let proximity = if status.any_near {
+            ProximityStatus::Near
+        } else if status
+            .devices
+            .values()
+            .any(|d| d.phase == ProximityPhase::Far)
+        {
+            ProximityStatus::Far
+        } else {
+            ProximityStatus::Disconnected
+        };
+        let rpl = status
+            .devices
+            .values()
+            .filter_map(|d| d.rpl)
+            .reduce(f64::min)
+            .unwrap_or(0.0);
+        (proximity, rpl)
     };
-
-    let rpl = status
-        .devices
-        .values()
-        .filter_map(|d| d.rpl)
-        .reduce(f64::min)
-        .unwrap_or(0.0);
 
     let response = QueryResponse {
         status: proximity as u8,

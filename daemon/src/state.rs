@@ -1,11 +1,16 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex, RwLock},
+    time::Instant,
+};
 
-use arc_swap::ArcSwap;
 use rand::Rng;
 use serde::Serialize;
 
 use crate::{config::Config, web::auth::AUTH_SESSION_DURATION};
 
+#[derive(Debug, Clone)]
 pub struct DeviceReport {
     pub target_mac: String,
     pub phase: ProximityPhase,
@@ -14,6 +19,7 @@ pub struct DeviceReport {
     pub connected: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct DeviceStatus {
     pub rpl: Option<f64>,
     pub raw_rpl: Option<f64>,
@@ -48,14 +54,26 @@ impl std::fmt::Display for ProximityPhase {
 }
 
 pub struct AppState {
-    pub config: Arc<ArcSwap<Config>>,
+    pub config: Arc<RwLock<Config>>,
     pub config_path: PathBuf,
     pub web_sessions: std::sync::Mutex<HashMap<String, Instant>>,
-    pub daemon_status: ArcSwap<DaemonStatus>,
+    pub daemon_status: Mutex<DaemonStatus>,
     pub config_notify: tokio::sync::Notify,
 }
 
 impl AppState {
+    pub fn reset_daemon_state(&self) {
+        let mut ds = self.daemon_status.lock().unwrap();
+        ds.devices.clear();
+        ds.any_near = true;
+    }
+
+    pub fn update_device(&self, mac: String, status: DeviceStatus, any_near: bool) {
+        let mut ds = self.daemon_status.lock().unwrap();
+        ds.devices.insert(mac, status);
+        ds.any_near = any_near;
+    }
+
     pub fn create_session(&self) -> String {
         let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
@@ -93,10 +111,10 @@ mod tests {
 
     fn test_app_state() -> AppState {
         AppState {
-            config: Arc::new(ArcSwap::from_pointee(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             config_path: PathBuf::from("test_config.toml"),
             web_sessions: std::sync::Mutex::new(HashMap::new()),
-            daemon_status: ArcSwap::from_pointee(DaemonStatus {
+            daemon_status: Mutex::from(DaemonStatus {
                 devices: HashMap::new(),
                 any_near: false,
                 started_at: Instant::now(),

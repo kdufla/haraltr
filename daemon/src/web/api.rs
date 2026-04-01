@@ -36,7 +36,7 @@ fn deep_merge(base: &mut Value, patch: &Value) {
 
 // TODO this returns tmp somewhat useless state
 pub(super) async fn status_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let status = state.daemon_status.load();
+    let status = state.daemon_status.lock().unwrap();
     let uptime = status.started_at.elapsed().as_secs();
 
     let devices: Vec<Value> = status
@@ -61,7 +61,7 @@ pub(super) async fn status_handler(State(state): State<Arc<AppState>>) -> Json<V
 }
 
 pub(super) async fn get_config_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let config = state.config.load();
+    let config = state.config.read().unwrap();
     Json(config_response(&config))
 }
 
@@ -69,10 +69,10 @@ pub(super) async fn put_config_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
-    let current = state.config.load();
+    let current = state.config.read().unwrap();
     let original_hash = current.web.password_hash.clone();
 
-    let mut base = serde_json::to_value(current.as_ref()).unwrap();
+    let mut base = serde_json::to_value(&*current).unwrap();
     deep_merge(&mut base, &body);
 
     let mut new_config: Config = match serde_json::from_value(base) {
@@ -109,6 +109,8 @@ pub(super) async fn put_config_handler(
         .iter()
         .map(|device| device.target_mac.clone())
         .collect();
+    drop(current);
+
     let new_devices: Vec<String> = new_config
         .devices
         .iter()
@@ -116,7 +118,7 @@ pub(super) async fn put_config_handler(
         .collect();
 
     let response = config_response(&new_config);
-    state.config.store(Arc::new(new_config));
+    *state.config.write().unwrap() = new_config;
 
     if old_devices != new_devices {
         state.config_notify.notify_one();
@@ -126,7 +128,7 @@ pub(super) async fn put_config_handler(
 }
 
 pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let config = state.config.load();
+    let config = state.config.read().unwrap();
     Json(json!({
         "devices": config.devices.iter().map(|d| json!({
             "target_mac": d.target_mac,
@@ -174,8 +176,7 @@ pub(super) async fn add_device_handler(
             .into_response();
     }
 
-    let current = state.config.load();
-    let mut new_config = current.as_ref().clone();
+    let mut new_config = (*state.config.read().unwrap()).clone();
 
     if new_config
         .devices
@@ -209,7 +210,7 @@ pub(super) async fn add_device_handler(
         return (status, Json(json!({"error": msg}))).into_response();
     }
 
-    state.config.store(Arc::new(new_config));
+    *state.config.write().unwrap() = new_config;
     state.config_notify.notify_one();
 
     Json(json!({"ok": true})).into_response()
@@ -224,8 +225,7 @@ pub(super) async fn remove_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RemoveDeviceRequest>,
 ) -> impl IntoResponse {
-    let current = state.config.load();
-    let mut new_config = current.as_ref().clone();
+    let mut new_config = (*state.config.read().unwrap()).clone();
 
     let before_len = new_config.devices.len();
     new_config
@@ -253,7 +253,7 @@ pub(super) async fn remove_device_handler(
         return (status, Json(json!({"error": msg}))).into_response();
     }
 
-    state.config.store(Arc::new(new_config));
+    *state.config.write().unwrap() = new_config;
     state.config_notify.notify_one();
 
     Json(json!({"ok": true})).into_response()
@@ -263,7 +263,6 @@ pub(super) async fn remove_device_handler(
 mod tests {
     use std::{collections::HashMap, path::PathBuf, time::Instant};
 
-    use arc_swap::ArcSwap;
     use axum::{
         Router,
         body::Body,
@@ -294,10 +293,10 @@ mod tests {
             },
         );
         Arc::new(AppState {
-            config: Arc::new(ArcSwap::from_pointee(config)),
+            config: Arc::new(std::sync::RwLock::new(config)),
             config_path: path,
             web_sessions: std::sync::Mutex::new(HashMap::new()),
-            daemon_status: ArcSwap::from_pointee(DaemonStatus {
+            daemon_status: std::sync::Mutex::new(DaemonStatus {
                 devices,
                 any_near: true,
                 started_at: Instant::now(),
@@ -434,8 +433,8 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["proximity"]["rpl_threshold"], 20.0);
 
-        // verify ArcSwap was updated
-        assert_eq!(state.config.load().proximity.rpl_threshold, 20.0);
+        // verify config was updated
+        assert_eq!(state.config.read().unwrap().proximity.rpl_threshold, 20.0);
 
         // verify file was written
         let contents = std::fs::read_to_string(&path).unwrap();
@@ -495,7 +494,7 @@ mod tests {
 
         // password_hash must be preserved in stored config
         assert_eq!(
-            state.config.load().web.password_hash.as_deref(),
+            state.config.read().unwrap().web.password_hash.as_deref(),
             Some("$argon2id$secret")
         );
 
@@ -553,7 +552,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let cfg = state.config.load();
+        let cfg = state.config.read().unwrap();
         assert_eq!(cfg.devices.len(), 1);
         assert_eq!(cfg.devices[0].target_mac, "AA:BB:CC:DD:EE:FF");
 
@@ -648,7 +647,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let cfg = state.config.load();
+        let cfg = state.config.read().unwrap();
         assert!(cfg.devices.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);

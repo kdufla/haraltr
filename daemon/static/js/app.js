@@ -234,7 +234,8 @@ async function fetchStatus() {
 
         for (const mac of deviceState.keys()) {
             if (!activeMacs.has(mac)) {
-                const idSuffix = mac.replaceAll(":", "-");
+                const entry = deviceState.get(mac);
+                entry.chart.destroy();
                 document.querySelector(`[data-mac="${CSS.escape(mac)}"]`)?.remove();
                 deviceState.delete(mac);
             }
@@ -284,7 +285,7 @@ document.getElementById("device-select").addEventListener("change", async (e) =>
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 target_mac: e.target.value,
-                address_type: selected.dataset.addressType,
+                bluetooth: { address_type: selected.dataset.addressType },
             }),
         });
         loadCurrentTarget();
@@ -310,5 +311,16 @@ document.getElementById("refresh-devices-btn").addEventListener("click", loadDev
 loadConfig();
 loadDevices();
 loadCurrentTarget();
-fetchStatus();
-setInterval(fetchStatus, 1000);
+
+let fetchPending = false;
+async function scheduledFetch() {
+    if (fetchPending) return;
+    fetchPending = true;
+    try {
+        await fetchStatus();
+    } finally {
+        fetchPending = false;
+    }
+}
+scheduledFetch();
+setInterval(scheduledFetch, 1000);

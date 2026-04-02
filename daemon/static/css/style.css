@@ -35,10 +35,34 @@
     transition: transform 0.2s;
 }
 
-.toggle input:checked + .slider {
+.toggle input:checked+.slider {
     background: #4a9eff;
 }
 
-.toggle input:checked + .slider::after {
+.toggle input:checked+.slider::after {
     transform: translateX(16px);
+}
+
+.device-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.btn-monitor,
+.btn-unmonitor {
+    font-size: 1.4rem;
+    line-height: 1;
+    padding: 0.1em 0.5em;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.btn-monitor {
+    background: #065d06;
+}
+
+.btn-unmonitor {
+    background: #860d0d;
 }

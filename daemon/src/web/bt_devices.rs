@@ -22,7 +22,8 @@ fn prop_u32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
     u32::try_from(props.get(key)?.clone()).ok()
 }
 
-pub(super) async fn list_devices() -> Result<Vec<Value>, Box<dyn std::error::Error + Send + Sync>> {
+pub(super) async fn list_bt_devices() -> Result<Vec<Value>, Box<dyn std::error::Error + Send + Sync>>
+{
     let conn = zbus::Connection::system().await?;
     let proxy = zbus::fdo::ObjectManagerProxy::builder(&conn)
         .destination("org.bluez")?

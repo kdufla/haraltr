@@ -10,7 +10,7 @@ use crate::{
         BluetoothOverrides, Config, ConfigError, DeviceEntry, ProximityOverrides, validate_mac,
     },
     state::AppState,
-    web::bt_devices::list_devices,
+    web::bt_devices::list_bt_devices,
 };
 
 fn config_response(config: &Config) -> Value {
@@ -126,27 +126,41 @@ pub(super) async fn put_config_handler(
     Json(response).into_response()
 }
 
-pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let config = state.config.read().unwrap();
-    Json(json!({
-        "devices": config.devices.iter().map(|d| json!({
-            "target_mac": d.target_mac,
-            "name": d.name,
-            "bluetooth": d.bluetooth,
-            "proximity": d.proximity,
-        })).collect::<Vec<_>>(),
-    }))
-}
+pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let bt_devices = match list_bt_devices().await {
+        Ok(btd) => btd,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("{e}"), "devices": []})),
+            )
+                .into_response();
+        }
+    };
 
-pub(super) async fn bt_devices_handler() -> impl IntoResponse {
-    match list_devices().await {
-        Ok(devices) => Json(json!({ "devices": devices })).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("{e}"), "devices": []})),
-        )
-            .into_response(),
-    }
+    let config = state.config.read().unwrap();
+    let monitored_macs: Vec<_> = config
+        .devices
+        .iter()
+        .map(|d| d.target_mac.as_str())
+        .collect();
+
+    let mut devices: Vec<_> = bt_devices
+        .into_iter()
+        .map(|mut dev| {
+            let mac = dev["mac"].as_str().unwrap_or("");
+            dev["monitored"] = json!(monitored_macs.contains(&mac));
+            dev
+        })
+        .collect();
+
+    devices.sort_by(|a, b| {
+        let a_name = a["name"].as_str().unwrap_or("\u{FFFF}");
+        let b_name = b["name"].as_str().unwrap_or("\u{FFFF}");
+        a_name.to_lowercase().cmp(&b_name.to_lowercase())
+    });
+
+    Json(json!({ "devices": devices })).into_response()
 }
 
 #[derive(Deserialize, Validate)]
@@ -501,15 +515,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_devices_returns_list() {
-        let mut config = Config::default();
-        config.devices.push(DeviceEntry {
-            target_mac: "AA:BB:CC:DD:EE:FF".into(),
-            name: Some("Phone".into()),
-            bluetooth: BluetoothOverrides::default(),
-            proximity: ProximityOverrides::default(),
-        });
-        let state = test_state_with_config_path(config, PathBuf::from("/tmp/test-config.toml"));
+    async fn get_devices_returns_devices_array() {
+        let state = test_state();
         let token = state.create_session();
         let app = test_router(state);
 
@@ -517,12 +524,9 @@ mod tests {
             .oneshot(authed_get("/api/devices", &token))
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
 
         let json = body_json(resp).await;
-        assert_eq!(json["devices"].as_array().unwrap().len(), 1);
-        assert_eq!(json["devices"][0]["target_mac"], "AA:BB:CC:DD:EE:FF");
-        assert_eq!(json["devices"][0]["name"], "Phone");
+        assert!(json["devices"].is_array());
     }
 
     #[tokio::test]

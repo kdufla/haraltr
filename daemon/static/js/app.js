@@ -247,62 +247,75 @@ async function fetchStatus() {
     }
 }
 
-async function loadDevices() {
-    try {
-        const res = await authFetch("/api/bt-devices");
-        const data = await res.json();
-        const sel = document.getElementById("device-select");
-        sel.length = 1;
-        for (const dev of data.devices || []) {
-            const opt = document.createElement("option");
-            opt.value = dev.mac;
-            opt.dataset.addressType = dev.address_type;
-            opt.textContent = dev.name + (dev.connected ? " [connected]" : "");
-            sel.appendChild(opt);
-        }
-    } catch (e) {
-        if (e.message !== "unauthorized") console.log(e);
-    }
-}
-
-async function loadCurrentTarget() {
-    try {
-        const res = await authFetch("/api/devices");
-        const data = await res.json();
-        document.getElementById("current-target").textContent =
-            data.target_mac ? "Current: " + data.target_mac : "No device selected";
-    } catch (e) {
-        if (e.message !== "unauthorized") console.log(e);
-    }
-}
-
-document.getElementById("device-select").addEventListener("change", async (e) => {
-    if (!e.target.value) return;
-    const selected = e.target.options[e.target.selectedIndex];
+async function addDevice(mac, addressType) {
     try {
         await authFetch("/api/devices", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                target_mac: e.target.value,
-                bluetooth: { address_type: selected.dataset.addressType },
+                target_mac: mac,
+                bluetooth: { address_type: addressType },
             }),
         });
-        loadCurrentTarget();
+        loadDevices();
     } catch (e) {
         if (e.message !== "unauthorized") console.log(e);
     }
-});
+}
 
-document.getElementById("clear-device-btn").addEventListener("click", async () => {
+async function removeDevice(mac) {
     try {
-        await authFetch("/api/devices", { method: "DELETE" });
-        loadCurrentTarget();
-        document.getElementById("device-select").value = "";
+        await authFetch("/api/devices", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_mac: mac }),
+        });
+        loadDevices();
     } catch (e) {
         if (e.message !== "unauthorized") console.log(e);
     }
-});
+}
+
+function renderDeviceItem(dev, monitored) {
+    const li = document.createElement("li");
+    li.className = "device-item";
+
+    const name = document.createElement("span");
+    name.textContent = dev.name || dev.mac;
+    li.appendChild(name);
+
+    const btn = document.createElement("button");
+    if (monitored) {
+        btn.className = "btn-unmonitor";
+        btn.textContent = "−";
+        btn.addEventListener("click", () => removeDevice(dev.mac));
+    } else {
+        btn.className = "btn-monitor";
+        btn.textContent = "+";
+        btn.addEventListener("click", () => addDevice(dev.mac, dev.address_type));
+    }
+    li.appendChild(btn);
+    return li;
+}
+
+async function loadDevices() {
+    try {
+        const res = await authFetch("/api/devices");
+        const data = await res.json();
+
+        const connectedList = document.getElementById("connected-devices");
+        const availableList = document.getElementById("available-devices");
+        connectedList.innerHTML = "";
+        availableList.innerHTML = "";
+
+        for (const dev of data.devices || []) {
+            const li = renderDeviceItem(dev, dev.monitored);
+            (dev.connected ? connectedList : availableList).appendChild(li);
+        }
+    } catch (e) {
+        if (e.message !== "unauthorized") console.log(e);
+    }
+}
 
 document.getElementById("refresh-devices-btn").addEventListener("click", loadDevices);
 
@@ -310,7 +323,6 @@ document.getElementById("refresh-devices-btn").addEventListener("click", loadDev
 
 loadConfig();
 loadDevices();
-loadCurrentTarget();
 
 let fetchPending = false;
 async function scheduledFetch() {

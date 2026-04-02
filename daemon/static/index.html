@@ -23,15 +23,12 @@
     <div id="config-page">
         <h2>Configuration</h2>
         <fieldset>
-            <legend>Target Device</legend>
-            <label>Device
-                <select id="device-select">
-                    <option value="">— select —</option>
-                </select>
-            </label>
-            <span id="current-target">No device selected</span>
-            <button type="button" id="clear-device-btn">Clear</button>
+            <legend>Devices</legend>
             <button type="button" id="refresh-devices-btn">Refresh</button>
+            <h4>Connected</h4>
+            <ul id="connected-devices"></ul>
+            <h4>Available</h4>
+            <ul id="available-devices"></ul>
         </fieldset>
 
         <label class="toggle">Advanced

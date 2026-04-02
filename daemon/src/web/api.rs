@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
@@ -145,11 +145,22 @@ pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> i
         .map(|d| d.target_mac.as_str())
         .collect();
 
+    let device_entries: HashMap<&str, &DeviceEntry> = config
+        .devices
+        .iter()
+        .map(|d| (d.target_mac.as_str(), d))
+        .collect();
+
     let mut devices: Vec<_> = bt_devices
         .into_iter()
         .map(|mut dev| {
-            let mac = dev["mac"].as_str().unwrap_or("");
-            dev["monitored"] = json!(monitored_macs.contains(&mac));
+            let mac = dev["mac"].as_str().unwrap_or("").to_owned();
+            let monitored = monitored_macs.contains(&mac.as_str());
+            dev["monitored"] = json!(monitored);
+            if let Some(entry) = device_entries.get(mac.as_str()) {
+                dev["bluetooth"] = serde_json::to_value(&entry.bluetooth).unwrap();
+                dev["proximity"] = serde_json::to_value(&entry.proximity).unwrap();
+            }
             dev
         })
         .collect();
@@ -272,6 +283,67 @@ pub(super) async fn remove_device_handler(
     Json(json!({"ok": true})).into_response()
 }
 
+#[derive(Deserialize, Validate)]
+pub(super) struct UpdateDeviceRequest {
+    #[validate(custom(function = "validate_mac"))]
+    target_mac: String,
+    #[validate(nested)]
+    #[serde(default)]
+    bluetooth: BluetoothOverrides,
+    #[validate(nested)]
+    #[serde(default)]
+    proximity: ProximityOverrides,
+}
+
+pub(super) async fn update_device_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<UpdateDeviceRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = body.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("invalid request: {e}")})),
+        )
+            .into_response();
+    }
+
+    let mut new_config = (*state.config.read().unwrap()).clone();
+
+    let device = new_config
+        .devices
+        .iter_mut()
+        .find(|d| d.target_mac == body.target_mac);
+
+    let Some(device) = device else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "device not found"})),
+        )
+            .into_response();
+    };
+
+    device.bluetooth = body.bluetooth;
+    device.proximity = body.proximity;
+
+    if let Err(e) = new_config.save_to_file(&state.config_path) {
+        let (status, msg) = match e {
+            ConfigError::Validation(ve) => {
+                (StatusCode::BAD_REQUEST, format!("invalid config: {ve}"))
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to save config: {e}"),
+            ),
+        };
+        return (status, Json(json!({"error": msg}))).into_response();
+    }
+
+    *state.config.write().unwrap() = new_config;
+    state.config_notify.notify_one();
+
+    Json(json!({"ok": true})).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, path::PathBuf, time::Instant};
@@ -335,6 +407,7 @@ mod tests {
                 "/api/devices",
                 get(get_devices_handler)
                     .post(add_device_handler)
+                    .patch(update_device_handler)
                     .delete(remove_device_handler),
             )
             .route("/api/logout", post(logout_handler))
@@ -654,5 +727,68 @@ mod tests {
         assert!(cfg.devices.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn update_device_overrides() {
+        let dir = std::env::temp_dir().join("haraltr_test_update_device");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+        let mut config = Config::default();
+        config.devices.push(DeviceEntry {
+            target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            name: None,
+            bluetooth: BluetoothOverrides::default(),
+            proximity: ProximityOverrides::default(),
+        });
+        config.save_to_file(&path).unwrap();
+
+        let state = test_state_with_config_path(config, path.clone());
+        let token = state.create_session();
+        let app = test_router(state.clone());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/devices")
+                    .header("content-type", "application/json")
+                    .header("cookie", format!("session={token}"))
+                    .body(Body::from(
+                        r#"{"target_mac":"AA:BB:CC:DD:EE:FF","proximity":{"rpl_threshold":20.0}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let cfg = state.config.read().unwrap();
+        assert_eq!(cfg.devices[0].proximity.rpl_threshold, Some(20.0));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn update_device_not_found_returns_404() {
+        let state = test_state();
+        let token = state.create_session();
+        let app = test_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/devices")
+                    .header("content-type", "application/json")
+                    .header("cookie", format!("session={token}"))
+                    .body(Body::from(
+                        r#"{"target_mac":"AA:BB:CC:DD:EE:FF","proximity":{"rpl_threshold":20.0}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

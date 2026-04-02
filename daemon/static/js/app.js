@@ -276,25 +276,154 @@ async function removeDevice(mac) {
     }
 }
 
+let openAccordionMac = null;
+let deviceDebounceTimers = new Map();
+
+function toggleAccordion(mac) {
+    const prev = document.querySelector(".device-accordion:not([hidden])");
+    if (prev) prev.hidden = true;
+
+    if (openAccordionMac === mac) {
+        openAccordionMac = null;
+        return;
+    }
+
+    const el = document.getElementById(`accordion-${mac}`);
+    if (el) {
+        el.hidden = false;
+        openAccordionMac = mac;
+    }
+}
+
+function createAccordion(dev) {
+    const acc = document.createElement("div");
+    acc.className = "device-accordion";
+    acc.id = `accordion-${dev.mac}`;
+    acc.hidden = openAccordionMac !== dev.mac;
+
+    const bt = dev.bluetooth || {};
+    const prox = dev.proximity || {};
+
+    // TODO I'm no js expert but I can't imagine this being a good practice
+    acc.innerHTML =
+        `<form class="device-config-form" data-mac="${dev.mac}">` +
+        `<fieldset><legend>Proximity</legend>` +
+        `<label>RPL threshold <input type="number" name="proximity.rpl_threshold" min="0.5" max="100" step="0.5" value="${prox.rpl_threshold ?? ""}" placeholder="global"></label>` +
+        `<label>Disconnect action <select name="proximity.disconnect_action">` +
+        `<option value="" ${prox.disconnect_action == null ? "selected" : ""}>global</option>` +
+        `<option value="lock" ${prox.disconnect_action === "lock" ? "selected" : ""}>Lock</option>` +
+        `<option value="unlock" ${prox.disconnect_action === "unlock" ? "selected" : ""}>Unlock</option>` +
+        `<option value="none" ${prox.disconnect_action === "none" ? "selected" : ""}>None</option>` +
+        `</select></label>` +
+        `<label>Lock count <input type="number" name="proximity.lock_count" min="1" max="100" step="1" value="${prox.lock_count ?? ""}" placeholder="global"></label>` +
+        `<label>Unlock count <input type="number" name="proximity.unlock_count" min="1" max="100" step="1" value="${prox.unlock_count ?? ""}" placeholder="global"></label>` +
+        `<label>Kalman Q <input type="number" name="proximity.kalman_q" min="0.01" max="10" step="0.01" value="${prox.kalman_q ?? ""}" placeholder="global"></label>` +
+        `<label>Kalman R <input type="number" name="proximity.kalman_r" min="0.1" max="100" step="0.1" value="${prox.kalman_r ?? ""}" placeholder="global"></label>` +
+        `<label>Kalman initial <input type="number" name="proximity.kalman_initial" min="0.1" max="100" step="0.1" value="${prox.kalman_initial ?? ""}" placeholder="global"></label>` +
+        `</fieldset>` +
+        `<fieldset><legend>Bluetooth</legend>` +
+        `<label>Adapter index <input type="number" name="bluetooth.adapter_index" min="0" max="65535" step="1" value="${bt.adapter_index ?? ""}" placeholder="global"></label>` +
+        `<label>Poll interval (ms) <input type="number" name="bluetooth.poll_interval_ms" min="100" max="60000" step="100" value="${bt.poll_interval_ms ?? ""}" placeholder="global"></label>` +
+        `<label>Disconnect poll interval (ms) <input type="number" name="bluetooth.disconnect_poll_interval_ms" min="100" max="60000" step="100" value="${bt.disconnect_poll_interval_ms ?? ""}" placeholder="global"></label>` +
+        `</fieldset>` +
+        `</form>`;
+
+    acc.querySelector("form").addEventListener("change", () => {
+        const mac = dev.mac;
+        clearTimeout(deviceDebounceTimers.get(mac));
+        deviceDebounceTimers.set(mac, setTimeout(() => saveDeviceConfig(mac), 500));
+    });
+
+    return acc;
+}
+
+function collectDeviceConfig(mac) {
+    const form = document.querySelector(`.device-config-form[data-mac="${CSS.escape(mac)}"]`);
+    if (!form) return null;
+
+    function optNum(name) {
+        const el = form.elements[name];
+        if (!el || el.value === "") return null;
+        const v = el.valueAsNumber;
+        return isNaN(v) ? null : v;
+    }
+    function optStr(name) {
+        const el = form.elements[name];
+        if (!el || el.value === "") return null;
+        return el.value;
+    }
+
+    return {
+        target_mac: mac,
+        bluetooth: {
+            adapter_index: optNum("bluetooth.adapter_index"),
+            poll_interval_ms: optNum("bluetooth.poll_interval_ms"),
+            disconnect_poll_interval_ms: optNum("bluetooth.disconnect_poll_interval_ms"),
+        },
+        proximity: {
+            rpl_threshold: optNum("proximity.rpl_threshold"),
+            lock_count: optNum("proximity.lock_count"),
+            unlock_count: optNum("proximity.unlock_count"),
+            kalman_q: optNum("proximity.kalman_q"),
+            kalman_r: optNum("proximity.kalman_r"),
+            kalman_initial: optNum("proximity.kalman_initial"),
+            disconnect_action: optStr("proximity.disconnect_action"),
+        },
+    };
+}
+
+async function saveDeviceConfig(mac) {
+    const body = collectDeviceConfig(mac);
+    if (!body) return;
+    try {
+        const res = await authFetch("/api/devices", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        if (res.ok) {
+            showSave("Saved", false);
+        } else {
+            const data = await res.json().catch(() => ({}));
+            showSave(data.error || "Save failed", true);
+        }
+    } catch (e) {
+        if (e.message !== "unauthorized") {
+            showSave("Connection error", true);
+        }
+    }
+}
+
 function renderDeviceItem(dev, monitored) {
     const li = document.createElement("li");
     li.className = "device-item";
 
+    const row = document.createElement("div");
+    row.className = "device-row";
+
     const name = document.createElement("span");
     name.textContent = dev.name || dev.mac;
-    li.appendChild(name);
+    row.appendChild(name);
 
     const btn = document.createElement("button");
     if (monitored) {
         btn.className = "btn-unmonitor";
         btn.textContent = "−";
-        btn.addEventListener("click", () => removeDevice(dev.mac));
+        btn.addEventListener("click", (e) => { e.stopPropagation(); removeDevice(dev.mac); });
+        row.addEventListener("click", () => toggleAccordion(dev.mac));
+        row.style.cursor = "pointer";
     } else {
         btn.className = "btn-monitor";
         btn.textContent = "+";
         btn.addEventListener("click", () => addDevice(dev.mac, dev.address_type));
     }
-    li.appendChild(btn);
+    row.appendChild(btn);
+    li.appendChild(row);
+
+    if (monitored) {
+        li.appendChild(createAccordion(dev));
+    }
+
     return li;
 }
 

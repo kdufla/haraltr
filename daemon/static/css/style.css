@@ -44,9 +44,17 @@
 }
 
 .device-item {
+    list-style: none;
+}
+
+.device-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+
+.device-accordion {
+    padding: 0.5em 0;
 }
 
 .btn-monitor,

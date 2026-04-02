@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use api::{
     add_device_handler, get_config_handler, get_devices_handler, put_config_handler,
-    remove_device_handler, status_handler,
+    remove_device_handler, status_handler, update_device_handler,
 };
 use auth::{AuthUser, login_handler, logout_handler};
 use axum::{
@@ -59,6 +59,7 @@ pub async fn serve(state: Arc<AppState>) {
             "/api/devices",
             get(get_devices_handler)
                 .post(add_device_handler)
+                .patch(update_device_handler)
                 .delete(remove_device_handler),
         )
         .route("/api/logout", post(logout_handler))

@@ -206,7 +206,7 @@ fn spawn_web_server(app_state: &Arc<AppState>) {
     }
 
     if cfg.web.password_hash.is_none() {
-        warn!("web UI enabled but no password set — run 'haraltr passwd'. web server disabled.");
+        warn!("web UI enabled but no password set - run 'haraltr passwd'. web server disabled.");
         return;
     }
 
@@ -216,14 +216,14 @@ fn spawn_web_server(app_state: &Arc<AppState>) {
         match std::fs::metadata(&app_state.config_path) {
             Ok(meta) if meta.uid() != 0 => {
                 warn!(
-                    "config file not owned by root — web server disabled. \
+                    "config file not owned by root - web server disabled. \
                     fix with: sudo chown root:root {}",
                     app_state.config_path.display()
                 );
                 return;
             }
             Err(e) => {
-                warn!("cannot stat config file: {e} — web server disabled.");
+                warn!("cannot stat config file: {e} - web server disabled.");
                 return;
             }
             _ => {}

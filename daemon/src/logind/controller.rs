@@ -13,7 +13,7 @@ struct SessionInfo {
     object_path: OwnedObjectPath,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionController {
     pub(crate) connection: Connection,
     manager: Proxy<'static>,
@@ -36,7 +36,7 @@ impl SessionController {
         })
     }
 
-    pub async fn find_active_session(&self) -> Result<(LogindSession, u32)> {
+    pub(super) async fn find_active_session(&self) -> Result<(LogindSession, u32)> {
         let sessions: Vec<SessionInfo> = self
             .manager
             .call::<&str, (), _>("ListSessions", &())

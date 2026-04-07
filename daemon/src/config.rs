@@ -285,6 +285,7 @@ pub struct ProximityOverrides {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
 pub struct DeviceEntry {
+    pub uid: u32,
     #[validate(custom(function = "validate_mac"))]
     pub target_mac: String,
     #[serde(default)]
@@ -470,6 +471,7 @@ mod tests {
     fn partial_toml_fills_defaults() {
         let toml_str = r#"
 [[devices]]
+uid = 1000
 target_mac = "AA:BB:CC:DD:EE:FF"
 
 [proximity]
@@ -503,6 +505,7 @@ rpl_threshold = 20.0
         let path = dir.join("test_config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
+            uid: 1000,
             target_mac: "11:22:33:44:55:66".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
@@ -606,6 +609,7 @@ rpl_threshold = 15.0
 kalman_q = 0.1
 
 [[devices]]
+uid = 1000
 target_mac = "11:22:33:44:55:66"
 name = "Phone"
 
@@ -642,6 +646,7 @@ poll_interval_ms = 2000
 rpl_threshold = 15.0
 
 [[devices]]
+uid = 1000
 target_mac = "AA:BB:CC:DD:EE:FF"
 name = "Watch"
 "#,
@@ -661,6 +666,7 @@ name = "Watch"
         let config = Config {
             devices: vec![
                 DeviceEntry {
+                    uid: 1000,
                     target_mac: "11:22:33:44:55:66".into(),
                     name: Some("Phone".into()),
                     bluetooth: BluetoothOverrides {
@@ -674,6 +680,7 @@ name = "Watch"
                     },
                 },
                 DeviceEntry {
+                    uid: 1001,
                     target_mac: "AA:BB:CC:DD:EE:FF".into(),
                     name: None,
                     bluetooth: BluetoothOverrides::default(),

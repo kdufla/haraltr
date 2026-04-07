@@ -9,6 +9,7 @@ use crate::{
     config::{
         BluetoothOverrides, Config, ConfigError, DeviceEntry, ProximityOverrides, validate_mac,
     },
+    logind::watcher::NO_ACTIVE_UID,
     state::AppState,
     web::bt_devices::list_bt_devices,
 };
@@ -215,6 +216,7 @@ pub(super) async fn add_device_handler(
     }
 
     new_config.devices.push(DeviceEntry {
+        uid: NO_ACTIVE_UID, // TODO placeholder
         target_mac: body.target_mac.clone(),
         name: body.name,
         bluetooth: body.bluetooth,
@@ -642,6 +644,7 @@ mod tests {
         let path = dir.join("config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
+            uid: NO_ACTIVE_UID,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
@@ -698,6 +701,7 @@ mod tests {
         let path = dir.join("config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
+            uid: NO_ACTIVE_UID,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
@@ -736,6 +740,7 @@ mod tests {
         let path = dir.join("config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
+            uid: NO_ACTIVE_UID,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),

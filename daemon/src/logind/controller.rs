@@ -4,17 +4,18 @@ use zbus::{Connection, Proxy, Result, zvariant, zvariant::OwnedObjectPath};
 use crate::logind::session::LogindSession;
 
 #[derive(zvariant::Type, serde::Deserialize, Debug)]
+#[allow(dead_code)]
 struct SessionInfo {
-    _id: String,
-    _uid: u32,
-    _user: String,
+    id: String,
+    uid: u32,
+    user: String,
     seat: String,
     object_path: OwnedObjectPath,
 }
 
 #[derive(Debug)]
 pub struct SessionController {
-    connection: Connection,
+    pub(crate) connection: Connection,
     manager: Proxy<'static>,
 }
 
@@ -35,7 +36,7 @@ impl SessionController {
         })
     }
 
-    async fn find_active_session(&self) -> Result<LogindSession> {
+    pub async fn find_active_session(&self) -> Result<(LogindSession, u32)> {
         let sessions: Vec<SessionInfo> = self
             .manager
             .call::<&str, (), _>("ListSessions", &())
@@ -53,7 +54,7 @@ impl SessionController {
                     .await?;
 
             if session.is_active().await? {
-                return Ok(session);
+                return Ok((session, session_info.uid));
             }
         }
 
@@ -64,7 +65,7 @@ impl SessionController {
     }
 
     pub async fn lock(&self) -> Result<()> {
-        let active_session = match self.find_active_session().await {
+        let (active_session, _) = match self.find_active_session().await {
             Ok(session) => session,
             Err(e) => {
                 error!("failed to find active session for lock: {e}");
@@ -80,7 +81,8 @@ impl SessionController {
     }
 
     pub async fn unlock(&self) -> Result<()> {
-        let active_session = match self.find_active_session().await {
+        let (active_session, _) = match self.find_active_session().await {
+            // let active_session = match self.find_active_session().await {
             Ok(session) => session,
             Err(e) => {
                 error!("failed to find active session for unlock: {e}");

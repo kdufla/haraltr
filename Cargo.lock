@@ -527,6 +527,7 @@ dependencies = [
  "common",
  "cookie",
  "evdev",
+ "futures-lite",
  "hex",
  "http-body-util",
  "libc",
@@ -1420,6 +1421,7 @@ name = "pam"
 version = "0.1.0"
 dependencies = [
  "common",
+ "libc",
  "nonstick",
  "syslog",
 ]

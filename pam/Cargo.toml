@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-# This is crucial: it tells the compiler to create a .so file
 crate-type = ["cdylib"]
 
 [dependencies]
 common = { path = "../common" }
+libc = "0.2"
 nonstick = "0.1.1"
 syslog = "7.0.0"

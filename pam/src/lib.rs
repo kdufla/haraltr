@@ -1,12 +1,12 @@
 use std::{
-    ffi::CStr,
+    ffi::{CStr, CString},
     io::{Read, Write},
     os::unix::net::UnixStream,
     thread,
     time::Duration,
 };
 
-use common::{IPC_SOCKET_PATH, ProximityStatus, QueryKind, QueryResponse};
+use common::{IPC_SOCKET_PATH, ProximityStatus, QUERY_SIZE, QueryKind, QueryResponse};
 use nonstick::{
     AuthnFlags, BaseFlags, ConversationAdapter, CredAction, ErrorCode, ModuleClient, PamModule,
     Result as PamResult, pam_export,
@@ -25,19 +25,27 @@ impl<M: ModuleClient> PamModule<M> for HaraltrPam {
         let username = handle.username(None)?;
         log(format!("proximity auth requested for {username:?}"));
 
+        let username_str = username.to_str().ok_or_else(|| {
+            log("username contains invalid UTF-8");
+            ErrorCode::SystemError
+        })?;
+        let uid = match username_to_uid(username_str) {
+            Some(uid) => uid,
+            None => {
+                log(format!("failed to resolve uid for {username:?}"));
+                return Err(ErrorCode::UserUnknown);
+            }
+        };
+
         handle.info_msg("haraltr: checking device proximity...");
 
-        // TODO pass username to check only devices bound to the user
         for attempt in 0..MAX_RETRIES {
-            match query_daemon() {
+            match query_daemon(uid) {
                 Err(e) => return Err(e),
                 Ok(response) => {
                     let status = response.status;
                     if status == ProximityStatus::Near as u8 {
-                        log(format!(
-                            "proximity auth succeeded for {username:?} (rpl={})",
-                            { response.rpl }
-                        ));
+                        log(format!("proximity auth succeeded for {username:?}",));
                         return Ok(());
                     }
 
@@ -81,7 +89,17 @@ fn log(msg: impl std::fmt::Display) {
     }
 }
 
-fn query_daemon() -> Result<QueryResponse, ErrorCode> {
+fn username_to_uid(username: &str) -> Option<u32> {
+    let c_name = CString::new(username).ok()?;
+    let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
+    if pw.is_null() {
+        None
+    } else {
+        Some(unsafe { (*pw).pw_uid })
+    }
+}
+
+fn query_daemon(uid: u32) -> Result<QueryResponse, ErrorCode> {
     let mut stream = UnixStream::connect(IPC_SOCKET_PATH).map_err(|e| {
         log(format!("daemon unavailable: {e}"));
         ErrorCode::AuthInfoUnavailable
@@ -92,12 +110,14 @@ fn query_daemon() -> Result<QueryResponse, ErrorCode> {
         ErrorCode::SystemError
     })?;
 
-    stream
-        .write_all(&[QueryKind::IsDeviceNear as u8])
-        .map_err(|e| {
-            log(format!("failed to send query: {e}"));
-            ErrorCode::SystemError
-        })?;
+    let mut query = [0u8; QUERY_SIZE];
+    query[0] = QueryKind::IsDeviceNear as u8;
+    query[1..5].copy_from_slice(&uid.to_le_bytes());
+
+    stream.write_all(&query).map_err(|e| {
+        log(format!("failed to send query: {e}"));
+        ErrorCode::SystemError
+    })?;
 
     let mut buf = [0u8; size_of::<QueryResponse>()];
     stream.read_exact(&mut buf).map_err(|e| {

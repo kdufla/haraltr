@@ -35,6 +35,20 @@ pub struct DaemonStatus {
     pub started_at: Instant,
 }
 
+impl DaemonStatus {
+    pub fn is_any_near(&self, user_macs: &[String]) -> bool {
+        self.devices.iter().any(|(mac, dev_status)| {
+            user_macs.contains(mac) && dev_status.phase == ProximityPhase::Near
+        })
+    }
+
+    pub fn is_any_far(&self, user_macs: &[String]) -> bool {
+        self.devices.iter().any(|(mac, dev_status)| {
+            user_macs.contains(mac) && dev_status.phase == ProximityPhase::Far
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProximityPhase {

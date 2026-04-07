@@ -1,6 +1,7 @@
 use std::{mem::size_of, ptr};
 
 pub const IPC_SOCKET_PATH: &str = "/run/haraltr/query.sock";
+pub const QUERY_SIZE: usize = 5; // 1 QueryKind + 4 little-endian u32 UID 
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,11 +28,10 @@ impl ProximityStatus {
 #[derive(Debug, Clone, Copy)]
 pub struct QueryResponse {
     pub status: u8,
-    pub rpl: f32,
     pub timestamp_secs: u64,
 }
 
-const _: () = assert!(size_of::<QueryResponse>() == 13);
+const _: () = assert!(size_of::<QueryResponse>() == 9);
 
 impl QueryResponse {
     pub fn as_bytes(&self) -> &[u8] {
@@ -51,7 +51,6 @@ mod tests {
     fn round_trip() {
         let original = QueryResponse {
             status: ProximityStatus::Near as u8,
-            rpl: 12.5,
             timestamp_secs: 1234567890,
         };
 
@@ -59,7 +58,6 @@ mod tests {
         let restored = QueryResponse::from_bytes(&bytes);
 
         assert_eq!(original.status, restored.status);
-        assert_eq!({ original.rpl }, { restored.rpl });
         assert_eq!({ original.timestamp_secs }, { restored.timestamp_secs });
     }
 

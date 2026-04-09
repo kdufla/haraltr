@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use tokio::{sync::mpsc, task::JoinHandle, time};
 use tracing::{error, warn};
@@ -6,15 +6,16 @@ use tracing::{error, warn};
 use crate::{
     bt_mgmt::BtMgmt,
     config::{BluetoothConfig, ProximityConfig},
-    proximity::{Reading, State},
-    state::DeviceReport,
+    proximity::{Action, ProxState, Reading},
+    state::{AppState, DeviceAction, DeviceStatus},
 };
 
 pub fn spawn_device_task(
     target_mac: String,
     bt_config: BluetoothConfig,
     prox_config: ProximityConfig,
-    state_change_tx: mpsc::Sender<DeviceReport>,
+    app_state: Arc<AppState>,
+    action_tx: mpsc::Sender<DeviceAction>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut bt = match BtMgmt::new(&target_mac, &bt_config, &prox_config) {
@@ -25,7 +26,7 @@ pub fn spawn_device_task(
             }
         };
 
-        let mut prox_state = State::new(&prox_config);
+        let mut prox_state = ProxState::new(&prox_config);
         let mut poll_interval = time::interval(Duration::from_millis(bt_config.poll_interval_ms));
 
         loop {
@@ -45,20 +46,28 @@ pub fn spawn_device_task(
             };
 
             let was_disconnected = prox_state.is_disconnected();
-            let _action = prox_state.transition(reading);
+            let action = prox_state.transition(reading);
             let is_disconnected = prox_state.is_disconnected();
 
-            let _ = state_change_tx
-                .send(DeviceReport {
-                    target_mac: target_mac.clone(),
-                    phase: prox_state.proximity_phase(),
+            app_state.update_device(
+                target_mac.clone(),
+                DeviceStatus {
                     rpl,
                     raw_rpl,
+                    phase: prox_state.proximity_phase(),
                     connected,
-                })
-                .await;
+                },
+            );
 
-            // adjust poll interval on disconnect/reconnect
+            if action != Action::None {
+                let _ = action_tx
+                    .send(DeviceAction {
+                        target_mac: target_mac.clone(),
+                        action,
+                    })
+                    .await;
+            }
+
             if was_disconnected != is_disconnected {
                 let target_ms = if is_disconnected {
                     bt_config.disconnect_poll_interval_ms

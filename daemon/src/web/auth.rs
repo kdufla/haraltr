@@ -142,10 +142,10 @@ mod tests {
             web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: std::sync::Mutex::new(DaemonStatus {
                 devices: HashMap::new(),
-                any_near: false,
                 started_at: Instant::now(),
             }),
             config_notify: tokio::sync::Notify::new(),
+            active_uid: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1000)),
         })
     }
 

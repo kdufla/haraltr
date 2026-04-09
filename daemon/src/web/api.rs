@@ -9,7 +9,6 @@ use crate::{
     config::{
         BluetoothOverrides, Config, ConfigError, DeviceEntry, ProximityOverrides, validate_mac,
     },
-    logind::watcher::NO_ACTIVE_UID,
     state::AppState,
     web::bt_devices::list_bt_devices,
 };
@@ -54,7 +53,6 @@ pub(super) async fn status_handler(State(state): State<Arc<AppState>>) -> Json<V
         .collect();
 
     Json(json!({
-        "any_near": status.any_near,
         "devices": devices,
         "uptime_secs": uptime,
     }))
@@ -139,12 +137,8 @@ pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> i
         }
     };
 
+    let active_uid = state.active_uid();
     let config = state.config.read().unwrap();
-    let monitored_macs: Vec<_> = config
-        .devices
-        .iter()
-        .map(|d| d.target_mac.as_str())
-        .collect();
 
     let device_entries: HashMap<&str, &DeviceEntry> = config
         .devices
@@ -154,15 +148,20 @@ pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> i
 
     let mut devices: Vec<_> = bt_devices
         .into_iter()
-        .map(|mut dev| {
+        .filter_map(|mut dev| {
             let mac = dev["mac"].as_str().unwrap_or("").to_owned();
-            let monitored = monitored_macs.contains(&mac.as_str());
-            dev["monitored"] = json!(monitored);
             if let Some(entry) = device_entries.get(mac.as_str()) {
+                // Hide devices owned by other users
+                if entry.uid != active_uid {
+                    return None;
+                }
+                dev["monitored"] = json!(true);
                 dev["bluetooth"] = serde_json::to_value(&entry.bluetooth).unwrap();
                 dev["proximity"] = serde_json::to_value(&entry.proximity).unwrap();
+            } else {
+                dev["monitored"] = json!(false);
             }
-            dev
+            Some(dev)
         })
         .collect();
 
@@ -201,6 +200,15 @@ pub(super) async fn add_device_handler(
             .into_response();
     }
 
+    let uid = state.active_uid();
+    if uid == crate::logind::watcher::NO_ACTIVE_UID {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "no active session, cannot determine user"})),
+        )
+            .into_response();
+    }
+
     let mut new_config = (*state.config.read().unwrap()).clone();
 
     if new_config
@@ -216,7 +224,7 @@ pub(super) async fn add_device_handler(
     }
 
     new_config.devices.push(DeviceEntry {
-        uid: NO_ACTIVE_UID, // TODO placeholder
+        uid,
         target_mac: body.target_mac.clone(),
         name: body.name,
         bluetooth: body.bluetooth,
@@ -385,10 +393,10 @@ mod tests {
             web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: std::sync::Mutex::new(DaemonStatus {
                 devices,
-                any_near: true,
                 started_at: Instant::now(),
             }),
             config_notify: tokio::sync::Notify::new(),
+            active_uid: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1000)),
         })
     }
 
@@ -448,7 +456,6 @@ mod tests {
 
         // TODO update assertions when web UI is redesigned for multi-device
         let json = body_json(resp).await;
-        assert!(json["any_near"].as_bool().unwrap());
         assert!(json["devices"].is_array());
         assert!(json["uptime_secs"].is_number());
     }
@@ -644,7 +651,7 @@ mod tests {
         let path = dir.join("config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
-            uid: NO_ACTIVE_UID,
+            uid: 1000,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
@@ -701,7 +708,7 @@ mod tests {
         let path = dir.join("config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
-            uid: NO_ACTIVE_UID,
+            uid: 1000,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
@@ -740,7 +747,7 @@ mod tests {
         let path = dir.join("config.toml");
         let mut config = Config::default();
         config.devices.push(DeviceEntry {
-            uid: NO_ACTIVE_UID,
+            uid: 1000,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
             name: None,
             bluetooth: BluetoothOverrides::default(),

@@ -11,8 +11,11 @@ mod wake_up;
 mod web;
 
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU32, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -29,7 +32,9 @@ use crate::{
     config::{Config, DaemonMode},
     device::spawn_device_task,
     ipc::spawn_ipc_listener,
-    state::{AppState, DaemonStatus, DeviceReport, DeviceStatus, ProximityPhase},
+    logind::watcher::{NO_ACTIVE_UID, spawn_session_watcher},
+    proximity::Action,
+    state::{AppState, DaemonStatus, DeviceAction},
     wake_up::wake_screen,
 };
 
@@ -49,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let live_config = Arc::new(RwLock::new(config));
     let daemon_start = Instant::now();
+    let active_uid = Arc::new(AtomicU32::new(NO_ACTIVE_UID));
 
     let app_state = Arc::new(AppState {
         config: live_config.clone(),
@@ -56,10 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         web_sessions: std::sync::Mutex::new(HashMap::new()),
         daemon_status: Mutex::from(DaemonStatus {
             devices: HashMap::new(),
-            any_near: true,
             started_at: daemon_start,
         }),
         config_notify: tokio::sync::Notify::new(),
+        active_uid: active_uid.clone(),
     });
 
     let mode = live_config.read().unwrap().daemon.mode;
@@ -74,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sighup = signal(SignalKind::hangup())?;
 
     let logind_session = logind::SessionController::new().await?;
+    spawn_session_watcher(logind_session.clone(), active_uid.clone()).await;
 
     info!("daemon started");
 
@@ -100,71 +107,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let (state_change_tx, mut state_change_rx) =
-            mpsc::channel::<DeviceReport>(devices.len() * 4);
+        let mac_to_uid: HashMap<String, u32> = devices
+            .iter()
+            .map(|d| (d.target_mac.clone(), d.uid))
+            .collect();
+
+        let (action_tx, mut action_rx) = mpsc::channel::<DeviceAction>(devices.len() * 4);
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
+        let mut spawned_macs = HashSet::new();
 
         for device in &devices {
-            let handle = spawn_device_task(
-                device.target_mac.clone(),
-                config.bluetooth_for_device(device),
-                config.proximity_for_device(device),
-                state_change_tx.clone(),
-            );
-            handles.push(handle);
-            info!(mac = %device.target_mac, "spawned device monitor");
+            if spawned_macs.insert(device.target_mac.clone()) {
+                let handle = spawn_device_task(
+                    device.target_mac.clone(),
+                    config.bluetooth_for_device(device),
+                    config.proximity_for_device(device),
+                    app_state.clone(),
+                    action_tx.clone(),
+                );
+                handles.push(handle);
+                info!(mac = %device.target_mac, "spawned device monitor");
+            }
         }
-        drop(state_change_tx);
+        drop(action_tx);
 
-        let mut device_phases: HashMap<String, DeviceReport> = HashMap::new();
-        let mut was_any_near = true; // start true to avoid spurious unlock on daemon start
+        let mut device_wants: HashMap<String, Action> = mac_to_uid
+            .keys()
+            .map(|mac| (mac.clone(), Action::Unlock))
+            .collect();
+        let mut was_near_for_active = true;
+        let mut prev_active_uid = active_uid.load(Ordering::Relaxed);
 
         app_state.reset_daemon_state();
 
         loop {
             tokio::select! {
-                msg = state_change_rx.recv() => {
-                    let Some(report) = msg else {
+                msg = action_rx.recv() => {
+                    let Some(device_action) = msg else {
                         warn!("all device tasks exited, waiting for config reload");
                         break;
                     };
 
-                    device_phases.insert(report.target_mac.clone(), report.clone());
+                    device_wants.insert(device_action.target_mac.clone(), device_action.action);
 
-                    let is_any_near = device_phases.values().any(|latest_report| latest_report.phase == ProximityPhase::Near);
-
-                    app_state.update_device(report.target_mac.clone(), DeviceStatus {
-                            rpl: report.rpl,
-                            raw_rpl: report.raw_rpl,
-                            phase: report.phase,
-                            connected: report.connected,
-                        }, is_any_near);
-
-                    if matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
-                        if was_any_near && !is_any_near {
-                            info!("all devices far/disconnected, locking");
-                            if let Err(e) = logind_session.lock().await {
-                                error!("lock failed: {e}");
-                            }
-                        } else if !was_any_near && is_any_near {
-                            info!("device near, unlocking");
-                            let (wake_duration, mouse_interval, enter_interval) = {
-                                let cfg = live_config.read().unwrap();
-                                (
-                                    Duration::from_secs(cfg.wake.duration_secs),
-                                    Duration::from_millis(cfg.wake.mouse_interval_ms),
-                                    Duration::from_millis(cfg.wake.enter_interval_ms),
-                                )
-                            };
-                            if let Err(e) = wake_screen(wake_duration, mouse_interval, enter_interval).await {
-                                error!("wake failed: {e}");
-                            }
-                            if let Err(e) = logind_session.unlock().await {
-                                error!("unlock failed: {e}");
-                            }
-                        }
-                        was_any_near = is_any_near;
+                    if !matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
+                        continue;
                     }
+
+                    let uid = active_uid.load(Ordering::Relaxed);
+                    if uid == NO_ACTIVE_UID {
+                        continue;
+                    }
+
+                    let is_near_for_user = device_wants.iter().any(|(mac, action)| {
+                        mac_to_uid.get(mac).copied() == Some(uid)
+                            && *action == Action::Unlock
+                    });
+
+                    if uid != prev_active_uid {
+                        was_near_for_active = is_near_for_user;
+                        prev_active_uid = uid;
+                        continue;
+                    }
+
+                    if was_near_for_active && !is_near_for_user {
+                        info!(uid, "all user devices far/disconnected, locking");
+                        if let Err(e) = logind_session.lock(uid).await {
+                            error!("lock failed: {e}");
+                        }
+                    } else if !was_near_for_active && is_near_for_user {
+                        info!(uid, "user device near, unlocking");
+                        let (wake_duration, mouse_interval, enter_interval) = {
+                            let cfg = live_config.read().unwrap();
+                            (
+                                Duration::from_secs(cfg.wake.duration_secs),
+                                Duration::from_millis(cfg.wake.mouse_interval_ms),
+                                Duration::from_millis(cfg.wake.enter_interval_ms),
+                            )
+                        };
+                        if let Err(e) = wake_screen(wake_duration, mouse_interval, enter_interval).await {
+                            error!("wake failed: {e}");
+                        }
+                        if let Err(e) = logind_session.unlock(uid).await {
+                            error!("unlock failed: {e}");
+                        }
+                    }
+                    was_near_for_active = is_near_for_user;
                 }
                 _ = sigterm.recv() => {
                     for h in &handles { h.abort(); }

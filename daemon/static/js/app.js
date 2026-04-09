@@ -204,7 +204,6 @@ async function fetchStatus() {
         const res = await authFetch("/api/status");
         const data = await res.json();
 
-        document.getElementById("mon-any-near").textContent = data.any_near ? "yes" : "no";
         document.getElementById("mon-uptime").textContent = data.uptime_secs + "s";
 
         const activeMacs = new Set();

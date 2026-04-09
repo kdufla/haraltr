@@ -64,34 +64,51 @@ impl SessionController {
         )))
     }
 
-    pub async fn lock(&self) -> Result<()> {
-        let (active_session, _) = match self.find_active_session().await {
-            Ok(session) => session,
+    pub async fn lock(&self, uid: u32) -> Result<()> {
+        let (session, active_uid) = match self.find_active_session().await {
+            Ok(result) => result,
             Err(e) => {
                 error!("failed to find active session for lock: {e}");
                 return Err(e);
             }
         };
 
+        if active_uid != uid {
+            info!(
+                expected = uid,
+                actual = active_uid,
+                "skipping lock: not active user"
+            );
+            return Ok(());
+        }
+
         info!("locking session");
-        active_session.lock().await?;
+        session.lock().await?;
         info!("session locked");
 
         Ok(())
     }
 
-    pub async fn unlock(&self) -> Result<()> {
-        let (active_session, _) = match self.find_active_session().await {
-            // let active_session = match self.find_active_session().await {
-            Ok(session) => session,
+    pub async fn unlock(&self, uid: u32) -> Result<()> {
+        let (session, active_uid) = match self.find_active_session().await {
+            Ok(result) => result,
             Err(e) => {
                 error!("failed to find active session for unlock: {e}");
                 return Err(e);
             }
         };
 
+        if active_uid != uid {
+            info!(
+                expected = uid,
+                actual = active_uid,
+                "skipping unlock: not active user"
+            );
+            return Ok(());
+        }
+
         info!("unlocking session");
-        active_session.unlock().await?;
+        session.unlock().await?;
         info!("session unlocked");
 
         Ok(())

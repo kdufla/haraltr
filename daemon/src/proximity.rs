@@ -36,7 +36,7 @@ impl From<DisconnectActionConfig> for Action {
 }
 
 #[derive(Debug)]
-pub struct State {
+pub struct ProxState {
     phase: Phase,
     disconnect_action: Action,
     rpl_threshold: f64,
@@ -44,7 +44,7 @@ pub struct State {
     unlock_count: u32,
 }
 
-impl State {
+impl ProxState {
     pub fn new(config: &ProximityConfig) -> Self {
         Self {
             phase: Phase::Near { consecutive_far: 0 },
@@ -168,20 +168,20 @@ mod tests {
         }
     }
 
-    fn new_lock_on_disconnect() -> State {
-        State::new(&test_config(DisconnectActionConfig::Lock))
+    fn new_lock_on_disconnect() -> ProxState {
+        ProxState::new(&test_config(DisconnectActionConfig::Lock))
     }
 
-    fn new_far_state(disconnect_action: DisconnectActionConfig) -> State {
-        let mut s = State::new(&test_config(disconnect_action));
+    fn new_far_state(disconnect_action: DisconnectActionConfig) -> ProxState {
+        let mut s = ProxState::new(&test_config(disconnect_action));
         s.phase = Phase::Far {
             consecutive_near: 0,
         };
         s
     }
 
-    fn new_disconnected_state() -> State {
-        let mut s = State::new(&test_config(DisconnectActionConfig::Lock));
+    fn new_disconnected_state() -> ProxState {
+        let mut s = ProxState::new(&test_config(DisconnectActionConfig::Lock));
         s.phase = Phase::Disconnected;
         s
     }
@@ -244,14 +244,14 @@ mod tests {
 
     #[test]
     fn connection_lost_nothing_action() {
-        let mut s = State::new(&test_config(DisconnectActionConfig::None));
+        let mut s = ProxState::new(&test_config(DisconnectActionConfig::None));
         assert_eq!(s.transition(Reading::ConnectionLost), Action::None);
         assert!(s.is_disconnected());
     }
 
     #[test]
     fn connection_lost_unlock_action() {
-        let mut s = State::new(&test_config(DisconnectActionConfig::Unlock));
+        let mut s = ProxState::new(&test_config(DisconnectActionConfig::Unlock));
         assert_eq!(s.transition(Reading::ConnectionLost), Action::Unlock);
         assert!(s.is_disconnected());
     }

@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU32, Ordering},
+    },
     time::Instant,
 };
 
@@ -10,13 +13,10 @@ use serde::Serialize;
 
 use crate::{config::Config, web::auth::AUTH_SESSION_DURATION};
 
-#[derive(Debug, Clone)]
-pub struct DeviceReport {
+#[derive(Debug)]
+pub struct DeviceAction {
     pub target_mac: String,
-    pub phase: ProximityPhase,
-    pub rpl: Option<f64>,
-    pub raw_rpl: Option<f64>,
-    pub connected: bool,
+    pub action: crate::proximity::Action,
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +31,6 @@ pub struct DeviceStatus {
 // multi-device should be fixed for web and ipc
 pub struct DaemonStatus {
     pub devices: HashMap<String, DeviceStatus>,
-    pub any_near: bool,
     pub started_at: Instant,
 }
 
@@ -73,19 +72,22 @@ pub struct AppState {
     pub web_sessions: std::sync::Mutex<HashMap<String, Instant>>,
     pub daemon_status: Mutex<DaemonStatus>,
     pub config_notify: tokio::sync::Notify,
+    pub active_uid: Arc<AtomicU32>,
 }
 
 impl AppState {
+    pub fn active_uid(&self) -> u32 {
+        self.active_uid.load(Ordering::Relaxed)
+    }
+
     pub fn reset_daemon_state(&self) {
         let mut ds = self.daemon_status.lock().unwrap();
         ds.devices.clear();
-        ds.any_near = true;
     }
 
-    pub fn update_device(&self, mac: String, status: DeviceStatus, any_near: bool) {
+    pub fn update_device(&self, mac: String, status: DeviceStatus) {
         let mut ds = self.daemon_status.lock().unwrap();
         ds.devices.insert(mac, status);
-        ds.any_near = any_near;
     }
 
     pub fn create_session(&self) -> String {
@@ -130,10 +132,10 @@ mod tests {
             web_sessions: std::sync::Mutex::new(HashMap::new()),
             daemon_status: Mutex::from(DaemonStatus {
                 devices: HashMap::new(),
-                any_near: false,
                 started_at: Instant::now(),
             }),
             config_notify: tokio::sync::Notify::new(),
+            active_uid: Arc::new(AtomicU32::new(crate::logind::watcher::NO_ACTIVE_UID)),
         }
     }
 

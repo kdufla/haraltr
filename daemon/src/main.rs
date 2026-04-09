@@ -88,8 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = live_config.read().unwrap().clone();
         let devices = config.devices.clone();
 
-        if devices.is_empty() {
-            info!("no devices configured, waiting for config reload");
+        let current_uid = active_uid.load(Ordering::Relaxed);
+        let user_devices: Vec<_> = devices.iter().filter(|d| d.uid == current_uid).collect();
+
+        if user_devices.is_empty() {
+            info!(uid = current_uid, "no devices for active user, waiting");
             tokio::select! {
                 _ = sigterm.recv() => break 'daemon,
                 _ = sigint.recv() => break 'daemon,
@@ -107,16 +110,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let mac_to_uid: HashMap<String, u32> = devices
-            .iter()
-            .map(|d| (d.target_mac.clone(), d.uid))
-            .collect();
-
-        let (action_tx, mut action_rx) = mpsc::channel::<DeviceAction>(devices.len() * 4);
+        let (action_tx, mut action_rx) = mpsc::channel::<DeviceAction>(user_devices.len() * 4);
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
         let mut spawned_macs = HashSet::new();
 
-        for device in &devices {
+        for device in &user_devices {
             if spawned_macs.insert(device.target_mac.clone()) {
                 let handle = spawn_device_task(
                     device.target_mac.clone(),
@@ -126,17 +124,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     action_tx.clone(),
                 );
                 handles.push(handle);
-                info!(mac = %device.target_mac, "spawned device monitor");
+                info!(mac = %device.target_mac, uid = current_uid, "spawned device monitor");
             }
         }
         drop(action_tx);
 
-        let mut device_wants: HashMap<String, Action> = mac_to_uid
-            .keys()
+        let mut device_wants: HashMap<String, Action> = spawned_macs
+            .iter()
             .map(|mac| (mac.clone(), Action::Unlock))
             .collect();
-        let mut was_near_for_active = true;
-        let mut prev_active_uid = active_uid.load(Ordering::Relaxed);
+        let mut was_near = true;
 
         app_state.reset_daemon_state();
 
@@ -148,35 +145,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     };
 
+                    if active_uid.load(Ordering::Relaxed) != current_uid {
+                        info!("active user changed, restarting device monitors");
+                        for h in &handles { h.abort(); }
+                        break;
+                    }
+
                     device_wants.insert(device_action.target_mac.clone(), device_action.action);
 
                     if !matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
                         continue;
                     }
 
-                    let uid = active_uid.load(Ordering::Relaxed);
-                    if uid == NO_ACTIVE_UID {
-                        continue;
-                    }
+                    let is_near = device_wants.values().any(|a| *a == Action::Unlock);
 
-                    let is_near_for_user = device_wants.iter().any(|(mac, action)| {
-                        mac_to_uid.get(mac).copied() == Some(uid)
-                            && *action == Action::Unlock
-                    });
-
-                    if uid != prev_active_uid {
-                        was_near_for_active = is_near_for_user;
-                        prev_active_uid = uid;
-                        continue;
-                    }
-
-                    if was_near_for_active && !is_near_for_user {
-                        info!(uid, "all user devices far/disconnected, locking");
-                        if let Err(e) = logind_session.lock(uid).await {
+                    if was_near && !is_near {
+                        info!(uid = current_uid, "all user devices far/disconnected, locking");
+                        if let Err(e) = logind_session.lock(current_uid).await {
                             error!("lock failed: {e}");
                         }
-                    } else if !was_near_for_active && is_near_for_user {
-                        info!(uid, "user device near, unlocking");
+                    } else if !was_near && is_near {
+                        info!(uid = current_uid, "user device near, unlocking");
                         let (wake_duration, mouse_interval, enter_interval) = {
                             let cfg = live_config.read().unwrap();
                             (
@@ -188,11 +177,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Err(e) = wake_screen(wake_duration, mouse_interval, enter_interval).await {
                             error!("wake failed: {e}");
                         }
-                        if let Err(e) = logind_session.unlock(uid).await {
+                        if let Err(e) = logind_session.unlock(current_uid).await {
                             error!("unlock failed: {e}");
                         }
                     }
-                    was_near_for_active = is_near_for_user;
+                    was_near = is_near;
                 }
                 _ = sigterm.recv() => {
                     for h in &handles { h.abort(); }

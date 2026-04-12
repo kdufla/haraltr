@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tokio::{sync::mpsc, task::JoinHandle, time};
-use tracing::{error, warn};
+use tracing::{debug, error};
 
 use crate::{
     bt_mgmt::BtMgmt,
@@ -40,7 +40,7 @@ pub fn spawn_device_task(
                     true,
                 ),
                 Err(e) => {
-                    warn!(mac = %target_mac, "BT poll failed: {e}");
+                    debug!(mac = %target_mac, "BT poll failed: {e}");
                     (Reading::ConnectionLost, None, None, false)
                 }
             };

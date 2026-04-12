@@ -75,12 +75,12 @@ impl ProxState {
                 self.handle_rpl(rpl, is_far)
             }
             Reading::ConnectionLost => {
-                info!(previous = ?self.phase, "connection lost");
                 let already_disconnected = matches!(self.phase, Phase::Disconnected);
-                self.phase = Phase::Disconnected;
                 if already_disconnected {
                     Action::None
                 } else {
+                    info!(previous = ?self.phase, "connection lost");
+                    self.phase = Phase::Disconnected;
                     self.disconnect_action
                 }
             }

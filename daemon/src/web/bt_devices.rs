@@ -39,13 +39,14 @@ pub(super) async fn list_bt_devices() -> Result<Vec<Value>, Box<dyn std::error::
                 None => continue,
             };
 
-            let has_class = prop_u32(props, "Class").is_some();
-            let address_type = match prop_str(props, "AddressType").as_deref() {
-                Some("public") => "le_public",
-                Some("random") | Some("static") => "le_random",
-                Some("brconly") => "br_edr",
-                _ if has_class => "br_edr",
-                _ => continue,
+            let address_type = if prop_u32(props, "Class").is_some() {
+                "br_edr"
+            } else {
+                match prop_str(props, "AddressType").as_deref() {
+                    Some("public") => "le_public",
+                    Some("random") | Some("static") => "le_random",
+                    _ => continue,
+                }
             };
 
             let name = prop_str(props, "Alias").unwrap_or_else(|| mac.clone());

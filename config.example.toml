@@ -1,22 +1,30 @@
-active_device = "AA:BB:CC:DD:EE:FF"
+adapter_index = 0
 
 [daemon]
 mode = "both"
 
-[bluetooth]
-adapter_index = 0
-address_type = "br_edr"
-poll_interval_ms = 2000
+[br_edr]
+poll_interval_ms = 1000
 disconnect_poll_interval_ms = 5000
-
-[proximity]
 rpl_threshold = 15.0
-lock_count = 5
-unlock_count = 5
+lock_count = 4
+unlock_count = 4
 kalman_q = 0.1
 kalman_r = 3.0
 kalman_initial = 5.0
 disconnect_action = "none"
+
+[le]
+poll_interval_ms = 1000
+disconnect_poll_interval_ms = 5000
+rpl_threshold = 60.0
+lock_count = 8
+unlock_count = 8
+kalman_q = 0.1
+kalman_r = 8.0
+kalman_initial = 40.0
+disconnect_action = "none"
+fallback_tx_power = 0
 
 [wake]
 duration_secs = 3
@@ -25,18 +33,23 @@ enter_interval_ms = 3000
 
 [web]
 enabled = true
-port = 7878
+port = 15999
 
 [[devices]]
+uid = 1000
 target_mac = "AA:BB:CC:DD:EE:FF"
+address_type = "br_edr"
 name = "My Phone"
 
 [[devices]]
+uid = 1000
 target_mac = "11:22:33:44:55:66"
+address_type = "le_public"
 name = "My Watch"
 
 [devices.bluetooth]
-address_type = "le_public"
+adapter_index = 1
 
 [devices.proximity]
-rpl_threshold = 33.0
+rpl_threshold = 55.0
+fallback_tx_power = 4

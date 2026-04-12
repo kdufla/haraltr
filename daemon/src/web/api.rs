@@ -7,7 +7,8 @@ use validator::Validate;
 
 use crate::{
     config::{
-        BluetoothOverrides, Config, ConfigError, DeviceEntry, ProximityOverrides, validate_mac,
+        AddressTypeConfig, BluetoothOverrides, Config, ConfigError, DeviceEntry,
+        ProximityOverrides, validate_mac,
     },
     state::AppState,
     web::bt_devices::list_bt_devices,
@@ -179,6 +180,8 @@ pub(super) struct DeviceRequest {
     #[validate(custom(function = "validate_mac"))]
     target_mac: String,
     #[serde(default)]
+    address_type: AddressTypeConfig,
+    #[serde(default)]
     name: Option<String>,
     #[validate(nested)]
     #[serde(default)]
@@ -226,6 +229,7 @@ pub(super) async fn add_device_handler(
     new_config.devices.push(DeviceEntry {
         uid,
         target_mac: body.target_mac.clone(),
+        address_type: body.address_type,
         name: body.name,
         bluetooth: body.bluetooth,
         proximity: body.proximity,
@@ -495,8 +499,9 @@ mod tests {
         let json = body_json(resp).await;
         assert!(json["web"].is_object());
         assert!(json["web"].get("password_hash").is_none());
-        assert!(json["bluetooth"].is_object());
-        assert!(json["proximity"].is_object());
+        assert!(json["adapter_index"].is_number());
+        assert!(json["br_edr"].is_object());
+        assert!(json["le"].is_object());
     }
 
     #[tokio::test]
@@ -518,7 +523,7 @@ mod tests {
                     .uri("/api/config")
                     .header("content-type", "application/json")
                     .header("cookie", format!("session={token}"))
-                    .body(Body::from(r#"{"proximity":{"rpl_threshold":20.0}}"#))
+                    .body(Body::from(r#"{"br_edr":{"rpl_threshold":20.0}}"#))
                     .unwrap(),
             )
             .await
@@ -526,15 +531,15 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let json = body_json(resp).await;
-        assert_eq!(json["proximity"]["rpl_threshold"], 20.0);
+        assert_eq!(json["br_edr"]["rpl_threshold"], 20.0);
 
         // verify config was updated
-        assert_eq!(state.config.read().unwrap().proximity.rpl_threshold, 20.0);
+        assert_eq!(state.config.read().unwrap().br_edr.rpl_threshold, 20.0);
 
         // verify file was written
         let contents = std::fs::read_to_string(&path).unwrap();
         let loaded: Config = toml::from_str(&contents).unwrap();
-        assert_eq!(loaded.proximity.rpl_threshold, 20.0);
+        assert_eq!(loaded.br_edr.rpl_threshold, 20.0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -580,7 +585,7 @@ mod tests {
                     .uri("/api/config")
                     .header("content-type", "application/json")
                     .header("cookie", format!("session={token}"))
-                    .body(Body::from(r#"{"proximity":{"rpl_threshold":25.0}}"#))
+                    .body(Body::from(r#"{"br_edr":{"rpl_threshold":25.0}}"#))
                     .unwrap(),
             )
             .await
@@ -653,6 +658,7 @@ mod tests {
         config.devices.push(DeviceEntry {
             uid: 1000,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            address_type: AddressTypeConfig::default(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
             proximity: ProximityOverrides::default(),
@@ -710,6 +716,7 @@ mod tests {
         config.devices.push(DeviceEntry {
             uid: 1000,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            address_type: AddressTypeConfig::default(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
             proximity: ProximityOverrides::default(),
@@ -749,6 +756,7 @@ mod tests {
         config.devices.push(DeviceEntry {
             uid: 1000,
             target_mac: "AA:BB:CC:DD:EE:FF".into(),
+            address_type: AddressTypeConfig::default(),
             name: None,
             bluetooth: BluetoothOverrides::default(),
             proximity: ProximityOverrides::default(),

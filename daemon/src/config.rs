@@ -9,6 +9,443 @@ use tracing::info;
 use validator::{Validate, ValidationError};
 use xdg::BaseDirectories;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+#[validate(schema(function = "validate_config_schema"))]
+pub struct Config {
+    #[validate(nested)]
+    #[serde(default)]
+    pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub adapter_index: u16,
+    #[validate(nested)]
+    #[serde(default)]
+    pub br_edr: BrEdrDefaults,
+    #[validate(nested)]
+    #[serde(default)]
+    pub le: LeDefaults,
+    #[validate(nested)]
+    #[serde(default)]
+    pub wake: WakeConfig,
+    #[validate(nested)]
+    #[serde(default)]
+    pub web: WebConfig,
+    #[validate(nested)]
+    #[serde(default)]
+    pub devices: Vec<DeviceEntry>,
+}
+
+impl Config {
+    pub fn bluetooth_for_device(&self, device: &DeviceEntry) -> BluetoothConfig {
+        let (poll, dis_poll) = match device.address_type {
+            AddressTypeConfig::BrEdr => (
+                self.br_edr.poll_interval_ms,
+                self.br_edr.disconnect_poll_interval_ms,
+            ),
+            AddressTypeConfig::LePublic | AddressTypeConfig::LeRandom => (
+                self.le.poll_interval_ms,
+                self.le.disconnect_poll_interval_ms,
+            ),
+        };
+        BluetoothConfig {
+            adapter_index: device.bluetooth.adapter_index.unwrap_or(self.adapter_index),
+            address_type: device.address_type,
+            poll_interval_ms: device.bluetooth.poll_interval_ms.unwrap_or(poll),
+            disconnect_poll_interval_ms: device
+                .bluetooth
+                .disconnect_poll_interval_ms
+                .unwrap_or(dis_poll),
+        }
+    }
+
+    pub fn proximity_for_device(&self, device: &DeviceEntry) -> ProximityConfig {
+        match device.address_type {
+            AddressTypeConfig::BrEdr => {
+                let classic_defaults = &self.br_edr;
+                ProximityConfig {
+                    rpl_threshold: device
+                        .proximity
+                        .rpl_threshold
+                        .unwrap_or(classic_defaults.rpl_threshold),
+                    lock_count: device
+                        .proximity
+                        .lock_count
+                        .unwrap_or(classic_defaults.lock_count),
+                    unlock_count: device
+                        .proximity
+                        .unlock_count
+                        .unwrap_or(classic_defaults.unlock_count),
+                    kalman_q: device
+                        .proximity
+                        .kalman_q
+                        .unwrap_or(classic_defaults.kalman_q),
+                    kalman_r: device
+                        .proximity
+                        .kalman_r
+                        .unwrap_or(classic_defaults.kalman_r),
+                    kalman_initial: device
+                        .proximity
+                        .kalman_initial
+                        .unwrap_or(classic_defaults.kalman_initial),
+                    disconnect_action: device
+                        .proximity
+                        .disconnect_action
+                        .unwrap_or(classic_defaults.disconnect_action),
+                    fallback_tx_power: device.proximity.fallback_tx_power.unwrap_or(0),
+                }
+            }
+            AddressTypeConfig::LePublic | AddressTypeConfig::LeRandom => {
+                let le_defaults = &self.le;
+                ProximityConfig {
+                    rpl_threshold: device
+                        .proximity
+                        .rpl_threshold
+                        .unwrap_or(le_defaults.rpl_threshold),
+                    lock_count: device
+                        .proximity
+                        .lock_count
+                        .unwrap_or(le_defaults.lock_count),
+                    unlock_count: device
+                        .proximity
+                        .unlock_count
+                        .unwrap_or(le_defaults.unlock_count),
+                    kalman_q: device.proximity.kalman_q.unwrap_or(le_defaults.kalman_q),
+                    kalman_r: device.proximity.kalman_r.unwrap_or(le_defaults.kalman_r),
+                    kalman_initial: device
+                        .proximity
+                        .kalman_initial
+                        .unwrap_or(le_defaults.kalman_initial),
+                    disconnect_action: device
+                        .proximity
+                        .disconnect_action
+                        .unwrap_or(le_defaults.disconnect_action),
+                    fallback_tx_power: device
+                        .proximity
+                        .fallback_tx_power
+                        .unwrap_or(le_defaults.fallback_tx_power),
+                }
+            }
+        }
+    }
+
+    pub fn load() -> Result<Self, ConfigError> {
+        let path = ensure_config_file()?;
+        info!("loading config from {}", path.display());
+        let contents = fs::read_to_string(&path)?;
+        let config: Config = toml::from_str(&contents)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn save(&self) -> Result<(), ConfigError> {
+        let path = ensure_config_file()?;
+        self.save_to_file(&path)
+    }
+
+    pub fn save_to_file(&self, path: &Path) -> Result<(), ConfigError> {
+        self.validate()?;
+        let contents = toml::to_string_pretty(self)?;
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let tmp_path = dir.join(".config.toml.tmp");
+        fs::write(&tmp_path, &contents)?;
+        fs::rename(&tmp_path, path)?;
+
+        #[cfg(not(debug_assertions))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BluetoothConfig {
+    pub adapter_index: u16,
+    pub address_type: AddressTypeConfig,
+    pub poll_interval_ms: u64,
+    pub disconnect_poll_interval_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProximityConfig {
+    pub rpl_threshold: f64,
+    pub lock_count: u32,
+    pub unlock_count: u32,
+    pub kalman_q: f64,
+    pub kalman_r: f64,
+    pub kalman_initial: f64,
+    pub disconnect_action: DisconnectActionConfig,
+    pub fallback_tx_power: i8,
+}
+
+impl Default for ProximityConfig {
+    fn default() -> Self {
+        let defaults = BrEdrDefaults::default();
+        Self {
+            rpl_threshold: defaults.rpl_threshold,
+            lock_count: defaults.lock_count,
+            unlock_count: defaults.unlock_count,
+            kalman_q: defaults.kalman_q,
+            kalman_r: defaults.kalman_r,
+            kalman_initial: defaults.kalman_initial,
+            disconnect_action: defaults.disconnect_action,
+            fallback_tx_power: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum DisconnectActionConfig {
+    Lock,
+    Unlock,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+pub struct DaemonConfig {
+    #[serde(default)]
+    pub mode: DaemonMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonMode {
+    #[default]
+    Both,
+    PamOnly,
+    LockOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(default)]
+pub struct BrEdrDefaults {
+    #[validate(range(min = 1))]
+    pub poll_interval_ms: u64,
+    #[validate(range(min = 1))]
+    pub disconnect_poll_interval_ms: u64,
+    pub rpl_threshold: f64,
+    #[validate(range(min = 1))]
+    pub lock_count: u32,
+    #[validate(range(min = 1))]
+    pub unlock_count: u32,
+    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
+    pub kalman_q: f64,
+    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
+    pub kalman_r: f64,
+    pub kalman_initial: f64,
+    pub disconnect_action: DisconnectActionConfig,
+}
+
+impl Default for BrEdrDefaults {
+    fn default() -> Self {
+        Self {
+            poll_interval_ms: 1000,
+            disconnect_poll_interval_ms: 5000,
+            rpl_threshold: 15.0,
+            lock_count: 4,
+            unlock_count: 4,
+            kalman_q: 0.1,
+            kalman_r: 3.0,
+            kalman_initial: 5.0,
+            disconnect_action: DisconnectActionConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(default)]
+pub struct LeDefaults {
+    #[validate(range(min = 1))]
+    pub poll_interval_ms: u64,
+    #[validate(range(min = 1))]
+    pub disconnect_poll_interval_ms: u64,
+    pub rpl_threshold: f64,
+    #[validate(range(min = 1))]
+    pub lock_count: u32,
+    #[validate(range(min = 1))]
+    pub unlock_count: u32,
+    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
+    pub kalman_q: f64,
+    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
+    pub kalman_r: f64,
+    pub kalman_initial: f64,
+    pub disconnect_action: DisconnectActionConfig,
+    // if LE hci does not support HCI_OP_READ_TX_POWER
+    pub fallback_tx_power: i8,
+}
+
+impl Default for LeDefaults {
+    fn default() -> Self {
+        Self {
+            poll_interval_ms: 1000,
+            disconnect_poll_interval_ms: 5000,
+            rpl_threshold: 60.0,
+            lock_count: 8,
+            unlock_count: 8,
+            kalman_q: 0.1,
+            kalman_r: 8.0,
+            kalman_initial: 40.0,
+            disconnect_action: DisconnectActionConfig::default(),
+            fallback_tx_power: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct WakeConfig {
+    #[validate(range(min = 1))]
+    pub duration_secs: u64,
+    #[validate(range(min = 1))]
+    pub mouse_interval_ms: u64,
+    #[validate(range(min = 1))]
+    pub enter_interval_ms: u64,
+}
+
+impl Default for WakeConfig {
+    fn default() -> Self {
+        Self {
+            duration_secs: 3,
+            mouse_interval_ms: 250,
+            enter_interval_ms: 3000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct WebConfig {
+    pub enabled: bool,
+    #[validate(range(min = 1))]
+    pub port: u16,
+    #[serde(default)]
+    pub password_hash: Option<String>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            port: 15999,
+            password_hash: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+pub struct DeviceEntry {
+    pub uid: u32,
+    #[validate(custom(function = "validate_mac"))]
+    pub target_mac: String,
+    #[serde(default)]
+    pub address_type: AddressTypeConfig,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[validate(nested)]
+    #[serde(default)]
+    pub bluetooth: BluetoothOverrides,
+    #[validate(nested)]
+    #[serde(default)]
+    pub proximity: ProximityOverrides,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum AddressTypeConfig {
+    #[default]
+    BrEdr,
+    LePublic,
+    LeRandom,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+pub struct BluetoothOverrides {
+    #[serde(default)]
+    pub adapter_index: Option<u16>,
+    #[validate(range(min = 1))]
+    #[serde(default)]
+    pub poll_interval_ms: Option<u64>,
+    #[validate(range(min = 1))]
+    #[serde(default)]
+    pub disconnect_poll_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+pub struct ProximityOverrides {
+    #[serde(default)]
+    pub rpl_threshold: Option<f64>,
+    #[validate(range(min = 1))]
+    #[serde(default)]
+    pub lock_count: Option<u32>,
+    #[validate(range(min = 1))]
+    #[serde(default)]
+    pub unlock_count: Option<u32>,
+    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
+    #[serde(default)]
+    pub kalman_q: Option<f64>,
+    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
+    #[serde(default)]
+    pub kalman_r: Option<f64>,
+    #[serde(default)]
+    pub kalman_initial: Option<f64>,
+    #[serde(default)]
+    pub disconnect_action: Option<DisconnectActionConfig>,
+    #[serde(default)]
+    pub fallback_tx_power: Option<i8>,
+}
+
+pub fn validate_mac(mac: &str) -> Result<(), ValidationError> {
+    let parts: Vec<&str> = mac.split(':').collect();
+    if parts.len() == 6
+        && parts
+            .iter()
+            .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        Ok(())
+    } else {
+        Err(ValidationError::new("invalid mac"))
+    }
+}
+
+fn validate_config_schema(config: &Config) -> Result<(), ValidationError> {
+    let mut seen_macs = HashSet::new();
+    for dev in &config.devices {
+        if !seen_macs.insert(&dev.target_mac) {
+            return Err(ValidationError::new("duplicate mac"));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn config_path() -> Result<PathBuf, ConfigError> {
+    ensure_config_file()
+}
+
+fn ensure_config_file() -> Result<PathBuf, ConfigError> {
+    #[cfg(debug_assertions)]
+    {
+        let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config.toml");
+        if local.exists() {
+            return Ok(local);
+        }
+    }
+
+    let xdg = BaseDirectories::with_prefix("haraltr");
+
+    if let Some(path) = xdg.find_config_file("config.toml") {
+        return Ok(path);
+    }
+
+    let path = xdg.place_config_file("config.toml")?;
+    let defaults = Config::default();
+    defaults.save_to_file(&path)?;
+    Ok(path)
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
@@ -54,417 +491,52 @@ impl From<validator::ValidationErrors> for ConfigError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum AddressTypeConfig {
-    #[default]
-    BrEdr,
-    LePublic,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum DisconnectActionConfig {
-    Lock,
-    Unlock,
-    #[default]
-    None,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct BluetoothConfig {
-    #[serde(default)]
-    pub adapter_index: u16,
-    #[serde(default)]
-    pub address_type: AddressTypeConfig,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_poll_interval_ms")]
-    pub poll_interval_ms: u64,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_disconnect_poll_interval_ms")]
-    pub disconnect_poll_interval_ms: u64,
-}
-
-impl Default for BluetoothConfig {
-    fn default() -> Self {
-        Self {
-            adapter_index: 0,
-            address_type: AddressTypeConfig::default(),
-            poll_interval_ms: default_poll_interval_ms(),
-            disconnect_poll_interval_ms: default_disconnect_poll_interval_ms(),
-        }
-    }
-}
-
-fn default_poll_interval_ms() -> u64 {
-    2000
-}
-
-fn default_disconnect_poll_interval_ms() -> u64 {
-    5000
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct ProximityConfig {
-    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
-    #[serde(default = "default_rpl_threshold")]
-    pub rpl_threshold: f64,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_lock_count")]
-    pub lock_count: u32,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_unlock_count")]
-    pub unlock_count: u32,
-    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
-    #[serde(default = "default_kalman_q")]
-    pub kalman_q: f64,
-    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
-    #[serde(default = "default_kalman_r")]
-    pub kalman_r: f64,
-    #[serde(default = "default_kalman_initial")]
-    pub kalman_initial: f64,
-    #[serde(default)]
-    pub disconnect_action: DisconnectActionConfig,
-}
-
-impl Default for ProximityConfig {
-    fn default() -> Self {
-        Self {
-            rpl_threshold: default_rpl_threshold(),
-            lock_count: default_lock_count(),
-            unlock_count: default_unlock_count(),
-            kalman_q: default_kalman_q(),
-            kalman_r: default_kalman_r(),
-            kalman_initial: default_kalman_initial(),
-            disconnect_action: DisconnectActionConfig::default(),
-        }
-    }
-}
-
-fn default_rpl_threshold() -> f64 {
-    15.0
-}
-
-fn default_lock_count() -> u32 {
-    5
-}
-
-fn default_unlock_count() -> u32 {
-    5
-}
-
-fn default_kalman_q() -> f64 {
-    0.1
-}
-
-fn default_kalman_r() -> f64 {
-    3.0
-}
-
-fn default_kalman_initial() -> f64 {
-    5.0
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct WakeConfig {
-    #[validate(range(min = 1))]
-    #[serde(default = "default_duration_secs")]
-    pub duration_secs: u64,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_mouse_interval_ms")]
-    pub mouse_interval_ms: u64,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_enter_interval_ms")]
-    pub enter_interval_ms: u64,
-}
-
-impl Default for WakeConfig {
-    fn default() -> Self {
-        Self {
-            duration_secs: default_duration_secs(),
-            mouse_interval_ms: default_mouse_interval_ms(),
-            enter_interval_ms: default_enter_interval_ms(),
-        }
-    }
-}
-
-fn default_duration_secs() -> u64 {
-    3
-}
-
-fn default_mouse_interval_ms() -> u64 {
-    250
-}
-
-fn default_enter_interval_ms() -> u64 {
-    3000
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct WebConfig {
-    #[serde(default = "default_web_enabled")]
-    pub enabled: bool,
-    #[validate(range(min = 1))]
-    #[serde(default = "default_web_port")]
-    pub port: u16,
-    #[serde(default)]
-    pub password_hash: Option<String>,
-}
-
-impl Default for WebConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_web_enabled(),
-            port: default_web_port(),
-            password_hash: None,
-        }
-    }
-}
-
-fn default_web_enabled() -> bool {
-    true
-}
-
-fn default_web_port() -> u16 {
-    7878
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DaemonMode {
-    #[default]
-    Both,
-    PamOnly,
-    LockOnly,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
-pub struct DaemonConfig {
-    #[serde(default)]
-    pub mode: DaemonMode,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
-pub struct BluetoothOverrides {
-    #[serde(default)]
-    pub adapter_index: Option<u16>,
-    #[serde(default)]
-    pub address_type: Option<AddressTypeConfig>,
-    #[validate(range(min = 1))]
-    #[serde(default)]
-    pub poll_interval_ms: Option<u64>,
-    #[validate(range(min = 1))]
-    #[serde(default)]
-    pub disconnect_poll_interval_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
-pub struct ProximityOverrides {
-    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
-    #[serde(default)]
-    pub rpl_threshold: Option<f64>,
-    #[validate(range(min = 1))]
-    #[serde(default)]
-    pub lock_count: Option<u32>,
-    #[validate(range(min = 1))]
-    #[serde(default)]
-    pub unlock_count: Option<u32>,
-    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
-    #[serde(default)]
-    pub kalman_q: Option<f64>,
-    #[validate(range(exclusive_min = 0.0, message = "must be positive"))]
-    #[serde(default)]
-    pub kalman_r: Option<f64>,
-    #[serde(default)]
-    pub kalman_initial: Option<f64>,
-    #[serde(default)]
-    pub disconnect_action: Option<DisconnectActionConfig>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
-pub struct DeviceEntry {
-    pub uid: u32,
-    #[validate(custom(function = "validate_mac"))]
-    pub target_mac: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[validate(nested)]
-    #[serde(default)]
-    pub bluetooth: BluetoothOverrides,
-    #[validate(nested)]
-    #[serde(default)]
-    pub proximity: ProximityOverrides,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
-#[validate(schema(function = "validate_config_schema"))]
-pub struct Config {
-    #[validate(nested)]
-    #[serde(default)]
-    pub daemon: DaemonConfig,
-    #[validate(nested)]
-    #[serde(default)]
-    pub bluetooth: BluetoothConfig,
-    #[validate(nested)]
-    #[serde(default)]
-    pub proximity: ProximityConfig,
-    #[validate(nested)]
-    #[serde(default)]
-    pub wake: WakeConfig,
-    #[validate(nested)]
-    #[serde(default)]
-    pub web: WebConfig,
-    #[validate(nested)]
-    #[serde(default)]
-    pub devices: Vec<DeviceEntry>,
-}
-
-pub fn validate_mac(mac: &str) -> Result<(), ValidationError> {
-    let parts: Vec<&str> = mac.split(':').collect();
-    if parts.len() == 6
-        && parts
-            .iter()
-            .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
-    {
-        Ok(())
-    } else {
-        Err(ValidationError::new("invalid mac"))
-    }
-}
-
-fn validate_config_schema(config: &Config) -> Result<(), ValidationError> {
-    let mut seen_macs = HashSet::new();
-    for dev in &config.devices {
-        if !seen_macs.insert(&dev.target_mac) {
-            return Err(ValidationError::new("duplicate mac"));
-        }
-    }
-
-    Ok(())
-}
-
-impl Config {
-    pub fn bluetooth_for_device(&self, device: &DeviceEntry) -> BluetoothConfig {
-        let BluetoothOverrides {
-            adapter_index,
-            address_type,
-            poll_interval_ms,
-            disconnect_poll_interval_ms,
-        } = &device.bluetooth;
-
-        BluetoothConfig {
-            adapter_index: adapter_index.unwrap_or(self.bluetooth.adapter_index),
-            address_type: address_type.unwrap_or(self.bluetooth.address_type),
-            poll_interval_ms: poll_interval_ms.unwrap_or(self.bluetooth.poll_interval_ms),
-            disconnect_poll_interval_ms: disconnect_poll_interval_ms
-                .unwrap_or(self.bluetooth.disconnect_poll_interval_ms),
-        }
-    }
-
-    pub fn proximity_for_device(&self, device: &DeviceEntry) -> ProximityConfig {
-        let ProximityOverrides {
-            rpl_threshold,
-            lock_count,
-            unlock_count,
-            kalman_q,
-            kalman_r,
-            kalman_initial,
-            disconnect_action,
-        } = &device.proximity;
-
-        ProximityConfig {
-            rpl_threshold: rpl_threshold.unwrap_or(self.proximity.rpl_threshold),
-            lock_count: lock_count.unwrap_or(self.proximity.lock_count),
-            unlock_count: unlock_count.unwrap_or(self.proximity.unlock_count),
-            kalman_q: kalman_q.unwrap_or(self.proximity.kalman_q),
-            kalman_r: kalman_r.unwrap_or(self.proximity.kalman_r),
-            kalman_initial: kalman_initial.unwrap_or(self.proximity.kalman_initial),
-            disconnect_action: (*disconnect_action).unwrap_or(self.proximity.disconnect_action),
-        }
-    }
-
-    pub fn load() -> Result<Self, ConfigError> {
-        let path = ensure_config_file()?;
-        info!("loading config from {}", path.display());
-        let contents = fs::read_to_string(&path)?;
-        let config: Config = toml::from_str(&contents)?;
-        config.validate()?;
-        Ok(config)
-    }
-
-    pub fn save(&self) -> Result<(), ConfigError> {
-        let path = ensure_config_file()?;
-        self.save_to_file(&path)
-    }
-
-    pub fn save_to_file(&self, path: &Path) -> Result<(), ConfigError> {
-        self.validate()?;
-        let contents = toml::to_string_pretty(self)?;
-        let dir = path.parent().unwrap_or(Path::new("."));
-        let tmp_path = dir.join(".config.toml.tmp");
-        fs::write(&tmp_path, &contents)?;
-        fs::rename(&tmp_path, path)?;
-
-        #[cfg(not(debug_assertions))]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        }
-
-        Ok(())
-    }
-}
-
-pub fn config_path() -> Result<PathBuf, ConfigError> {
-    ensure_config_file()
-}
-
-fn ensure_config_file() -> Result<PathBuf, ConfigError> {
-    #[cfg(debug_assertions)]
-    {
-        let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config.toml");
-        if local.exists() {
-            return Ok(local);
-        }
-    }
-
-    let xdg = BaseDirectories::with_prefix("haraltr");
-
-    if let Some(path) = xdg.find_config_file("config.toml") {
-        return Ok(path);
-    }
-
-    let path = xdg.place_config_file("config.toml")?;
-    let defaults = Config::default();
-    defaults.save_to_file(&path)?;
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn empty_toml_gives_all_defaults() {
         let config: Config = toml::from_str("").unwrap();
-        let defaults = Config::default();
+        let br_edr = BrEdrDefaults::default();
+        let le = LeDefaults::default();
+        assert_eq!(config.adapter_index, 0);
+        assert_eq!(config.br_edr.poll_interval_ms, br_edr.poll_interval_ms);
+        assert_eq!(config.br_edr.rpl_threshold, br_edr.rpl_threshold);
+        assert_eq!(config.br_edr.lock_count, br_edr.lock_count);
+        assert_eq!(config.br_edr.kalman_q, br_edr.kalman_q);
+        assert_eq!(config.le.poll_interval_ms, le.poll_interval_ms);
+        assert_eq!(config.le.rpl_threshold, le.rpl_threshold);
+        assert_eq!(config.le.fallback_tx_power, le.fallback_tx_power);
         assert_eq!(
-            config.bluetooth.adapter_index,
-            defaults.bluetooth.adapter_index
+            config.wake.duration_secs,
+            WakeConfig::default().duration_secs
         );
-        assert_eq!(
-            config.bluetooth.poll_interval_ms,
-            defaults.bluetooth.poll_interval_ms
-        );
-        assert_eq!(
-            config.proximity.rpl_threshold,
-            defaults.proximity.rpl_threshold
-        );
-        assert_eq!(config.proximity.lock_count, defaults.proximity.lock_count);
-        assert_eq!(config.proximity.kalman_q, defaults.proximity.kalman_q);
-        assert_eq!(config.wake.duration_secs, defaults.wake.duration_secs);
         assert!(config.devices.is_empty());
+    }
+
+    #[test]
+    fn partial_br_edr_fills_from_br_edr_defaults() {
+        let toml_str = r#"
+[br_edr]
+rpl_threshold = 20.0
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.br_edr.rpl_threshold, 20.0);
+        assert_eq!(config.br_edr.poll_interval_ms, 1000);
+        assert_eq!(config.br_edr.kalman_r, 3.0);
+    }
+
+    #[test]
+    fn partial_le_fills_from_le_defaults() {
+        let toml_str = r#"
+[le]
+rpl_threshold = 65.0
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.le.rpl_threshold, 65.0);
+        assert_eq!(config.le.poll_interval_ms, 1000);
+        assert_eq!(config.le.kalman_r, 8.0);
+        assert_eq!(config.le.fallback_tx_power, 0);
     }
 
     #[test]
@@ -474,14 +546,14 @@ mod tests {
 uid = 1000
 target_mac = "AA:BB:CC:DD:EE:FF"
 
-[proximity]
+[br_edr]
 rpl_threshold = 20.0
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.devices[0].target_mac, "AA:BB:CC:DD:EE:FF");
-        assert_eq!(config.bluetooth.poll_interval_ms, 2000);
-        assert_eq!(config.proximity.rpl_threshold, 20.0);
-        assert_eq!(config.proximity.lock_count, 5);
+        assert_eq!(config.br_edr.poll_interval_ms, 1000);
+        assert_eq!(config.br_edr.rpl_threshold, 20.0);
+        assert_eq!(config.br_edr.lock_count, 4);
         assert_eq!(config.wake.duration_secs, 3);
     }
 
@@ -491,8 +563,13 @@ rpl_threshold = 20.0
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
         assert_eq!(
-            config.proximity.rpl_threshold,
-            deserialized.proximity.rpl_threshold
+            config.br_edr.rpl_threshold,
+            deserialized.br_edr.rpl_threshold
+        );
+        assert_eq!(config.le.rpl_threshold, deserialized.le.rpl_threshold);
+        assert_eq!(
+            config.le.fallback_tx_power,
+            deserialized.le.fallback_tx_power
         );
         assert_eq!(config.wake.duration_secs, deserialized.wake.duration_secs);
         assert_eq!(config.devices.len(), deserialized.devices.len());
@@ -507,11 +584,12 @@ rpl_threshold = 20.0
         config.devices.push(DeviceEntry {
             uid: 1000,
             target_mac: "11:22:33:44:55:66".into(),
+            address_type: AddressTypeConfig::BrEdr,
             name: None,
             bluetooth: BluetoothOverrides::default(),
             proximity: ProximityOverrides::default(),
         });
-        config.proximity.rpl_threshold = 25.0;
+        config.br_edr.rpl_threshold = 25.0;
 
         config.save_to_file(&path).unwrap();
 
@@ -519,33 +597,45 @@ rpl_threshold = 20.0
         let loaded: Config = toml::from_str(&contents).unwrap();
 
         assert_eq!(loaded.devices[0].target_mac, "11:22:33:44:55:66");
-        assert_eq!(loaded.proximity.rpl_threshold, 25.0);
+        assert_eq!(loaded.br_edr.rpl_threshold, 25.0);
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn enum_serialization() {
+    fn address_type_enum_serialization() {
         let toml_str = r#"
-[bluetooth]
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
 address_type = "le_public"
 
-[proximity]
-disconnect_action = "unlock"
+[[devices]]
+uid = 1001
+target_mac = "11:22:33:44:55:66"
+address_type = "le_random"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.bluetooth.address_type, AddressTypeConfig::LePublic);
-        assert_eq!(
-            config.proximity.disconnect_action,
-            DisconnectActionConfig::Unlock,
-        );
+        assert_eq!(config.devices[0].address_type, AddressTypeConfig::LePublic);
+        assert_eq!(config.devices[1].address_type, AddressTypeConfig::LeRandom);
+    }
+
+    #[test]
+    fn device_address_type_defaults_to_br_edr() {
+        let toml_str = r#"
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.devices[0].address_type, AddressTypeConfig::BrEdr);
     }
 
     #[test]
     fn web_config_defaults_when_missing() {
         let config: Config = toml::from_str("").unwrap();
         assert!(config.web.enabled);
-        assert_eq!(config.web.port, 7878);
+        assert_eq!(config.web.port, 15999);
         assert!(config.web.password_hash.is_none());
     }
 
@@ -578,44 +668,95 @@ disconnect_action = "unlock"
     }
 
     #[test]
-    fn no_devices_returns_global_config() {
+    fn br_edr_device_resolves_against_br_edr_defaults() {
         let config: Config = toml::from_str(
             r#"
-[bluetooth]
+[br_edr]
 poll_interval_ms = 500
-
-[proximity]
 rpl_threshold = 20.0
+
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
+address_type = "br_edr"
 "#,
         )
         .unwrap();
 
-        assert!(config.devices.is_empty());
-        assert_eq!(config.bluetooth.poll_interval_ms, 500);
-        assert_eq!(config.proximity.rpl_threshold, 20.0);
+        let device = &config.devices[0];
+        let bt = config.bluetooth_for_device(device);
+        assert_eq!(bt.poll_interval_ms, 500);
+        assert_eq!(bt.address_type, AddressTypeConfig::BrEdr);
+
+        let prox = config.proximity_for_device(device);
+        assert_eq!(prox.rpl_threshold, 20.0);
+        assert_eq!(prox.fallback_tx_power, 0);
     }
 
     #[test]
-    fn device_overrides_applied() {
+    fn le_device_resolves_against_le_defaults() {
         let config: Config = toml::from_str(
             r#"
-[bluetooth]
-adapter_index = 0
-address_type = "br_edr"
-poll_interval_ms = 2000
+[le]
+poll_interval_ms = 4000
+rpl_threshold = 65.0
 
-[proximity]
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
+address_type = "le_public"
+"#,
+        )
+        .unwrap();
+
+        let device = &config.devices[0];
+        let bt = config.bluetooth_for_device(device);
+        assert_eq!(bt.poll_interval_ms, 4000);
+        assert_eq!(bt.address_type, AddressTypeConfig::LePublic);
+
+        let prox = config.proximity_for_device(device);
+        assert_eq!(prox.rpl_threshold, 65.0);
+        assert_eq!(prox.fallback_tx_power, 0);
+    }
+
+    #[test]
+    fn le_random_device_resolves_against_le_defaults() {
+        let config: Config = toml::from_str(
+            r#"
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
+address_type = "le_random"
+"#,
+        )
+        .unwrap();
+
+        let device = &config.devices[0];
+        let bt = config.bluetooth_for_device(device);
+        assert_eq!(bt.address_type, AddressTypeConfig::LeRandom);
+        assert_eq!(bt.poll_interval_ms, LeDefaults::default().poll_interval_ms);
+
+        let prox = config.proximity_for_device(device);
+        assert_eq!(prox.fallback_tx_power, 0);
+    }
+
+    #[test]
+    fn device_overrides_win_over_transport_defaults() {
+        let config: Config = toml::from_str(
+            r#"
+[br_edr]
 rpl_threshold = 15.0
 kalman_q = 0.1
 
 [[devices]]
 uid = 1000
 target_mac = "11:22:33:44:55:66"
+address_type = "br_edr"
 name = "Phone"
 
 [devices.bluetooth]
 adapter_index = 1
-address_type = "le_public"
+poll_interval_ms = 1000
 
 [devices.proximity]
 rpl_threshold = 13.0
@@ -626,8 +767,8 @@ rpl_threshold = 13.0
         let device = &config.devices[0];
         let bt = config.bluetooth_for_device(device);
         assert_eq!(bt.adapter_index, 1);
-        assert_eq!(bt.address_type, AddressTypeConfig::LePublic);
-        assert_eq!(bt.poll_interval_ms, 2000);
+        assert_eq!(bt.poll_interval_ms, 1000);
+        assert_eq!(bt.disconnect_poll_interval_ms, 5000);
 
         let prox = config.proximity_for_device(device);
         assert_eq!(prox.rpl_threshold, 13.0);
@@ -635,20 +776,51 @@ rpl_threshold = 13.0
     }
 
     #[test]
-    fn device_no_overrides_uses_globals() {
+    fn fallback_tx_power_device_override_wins() {
         let config: Config = toml::from_str(
             r#"
-[bluetooth]
-adapter_index = 0
-poll_interval_ms = 2000
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
+address_type = "le_public"
 
-[proximity]
+[devices.proximity]
+fallback_tx_power = 4
+"#,
+        )
+        .unwrap();
+
+        let prox = config.proximity_for_device(&config.devices[0]);
+        assert_eq!(prox.fallback_tx_power, 4);
+    }
+
+    #[test]
+    fn fallback_tx_power_zero_for_br_edr_without_override() {
+        let config: Config = toml::from_str(
+            r#"
+[[devices]]
+uid = 1000
+target_mac = "AA:BB:CC:DD:EE:FF"
+address_type = "br_edr"
+"#,
+        )
+        .unwrap();
+
+        let prox = config.proximity_for_device(&config.devices[0]);
+        assert_eq!(prox.fallback_tx_power, 0);
+    }
+
+    #[test]
+    fn device_no_overrides_uses_transport_defaults() {
+        let config: Config = toml::from_str(
+            r#"
+[br_edr]
+poll_interval_ms = 2000
 rpl_threshold = 15.0
 
 [[devices]]
 uid = 1000
 target_mac = "AA:BB:CC:DD:EE:FF"
-name = "Watch"
 "#,
         )
         .unwrap();
@@ -668,10 +840,10 @@ name = "Watch"
                 DeviceEntry {
                     uid: 1000,
                     target_mac: "11:22:33:44:55:66".into(),
+                    address_type: AddressTypeConfig::BrEdr,
                     name: Some("Phone".into()),
                     bluetooth: BluetoothOverrides {
                         adapter_index: Some(1),
-                        address_type: Some(AddressTypeConfig::LePublic),
                         ..Default::default()
                     },
                     proximity: ProximityOverrides {
@@ -682,6 +854,7 @@ name = "Watch"
                 DeviceEntry {
                     uid: 1001,
                     target_mac: "AA:BB:CC:DD:EE:FF".into(),
+                    address_type: AddressTypeConfig::LePublic,
                     name: None,
                     bluetooth: BluetoothOverrides::default(),
                     proximity: ProximityOverrides::default(),
@@ -696,9 +869,17 @@ name = "Watch"
         assert_eq!(deserialized.devices.len(), 2);
         assert_eq!(deserialized.devices[0].target_mac, "11:22:33:44:55:66");
         assert_eq!(deserialized.devices[0].name.as_deref(), Some("Phone"));
+        assert_eq!(
+            deserialized.devices[0].address_type,
+            AddressTypeConfig::BrEdr
+        );
         assert_eq!(deserialized.devices[0].bluetooth.adapter_index, Some(1));
         assert_eq!(deserialized.devices[0].proximity.rpl_threshold, Some(13.0));
         assert_eq!(deserialized.devices[1].target_mac, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(
+            deserialized.devices[1].address_type,
+            AddressTypeConfig::LePublic
+        );
         assert!(deserialized.devices[1].name.is_none());
     }
 
@@ -774,5 +955,31 @@ name = "Watch"
         let validation_errors = validator::ValidationErrors::new();
         let val_err: ConfigError = validation_errors.into();
         assert!(matches!(val_err, ConfigError::Validation(_)));
+    }
+
+    #[test]
+    fn br_edr_is_default() {
+        let br_edr_defaults = BrEdrDefaults::default();
+        let proximity_defaults = ProximityConfig::default();
+
+        assert_eq!(
+            proximity_defaults.rpl_threshold,
+            br_edr_defaults.rpl_threshold
+        );
+        assert_eq!(proximity_defaults.lock_count, br_edr_defaults.lock_count);
+        assert_eq!(
+            proximity_defaults.unlock_count,
+            br_edr_defaults.unlock_count
+        );
+        assert_eq!(proximity_defaults.kalman_q, br_edr_defaults.kalman_q);
+        assert_eq!(proximity_defaults.kalman_r, br_edr_defaults.kalman_r);
+        assert_eq!(
+            proximity_defaults.kalman_initial,
+            br_edr_defaults.kalman_initial
+        );
+        assert_eq!(
+            proximity_defaults.disconnect_action,
+            br_edr_defaults.disconnect_action
+        );
     }
 }

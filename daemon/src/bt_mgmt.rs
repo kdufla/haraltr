@@ -1,8 +1,14 @@
-use btmgmt::{Client, client::Result, command::GetConnectionInformation};
+use btmgmt::{
+    Client,
+    client::{Error, Result},
+    command::GetConnectionInformation,
+};
 use btmgmt_packet::{Address, AddressType};
 use tracing::{debug, trace};
 
 use crate::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
+
+const HCI_TX_POWER_INVALID: i8 = 127;
 
 pub struct BtMgmt {
     client: Client,
@@ -10,6 +16,8 @@ pub struct BtMgmt {
     target_mac: Address,
     addr_type: AddressType,
     denoise_filter: KalmanFilter,
+    // if LE hci does not support HCI_OP_READ_TX_POWER
+    fallback_tx_power: i8,
 }
 
 impl BtMgmt {
@@ -26,6 +34,7 @@ impl BtMgmt {
         let addr_type = match bt_config.address_type {
             AddressTypeConfig::BrEdr => AddressType::BrEdr,
             AddressTypeConfig::LePublic => AddressType::LePublic,
+            AddressTypeConfig::LeRandom => AddressType::LeRandom,
         };
 
         Ok(Self {
@@ -38,12 +47,29 @@ impl BtMgmt {
                 prox_config.kalman_q,
                 prox_config.kalman_r,
             ),
+            fallback_tx_power: prox_config.fallback_tx_power,
         })
     }
 
     pub async fn relative_path_loss(&mut self) -> Result<(f64, f64)> {
         let (rssi, tx_power) = self.get_connection_information().await?;
-        let raw_rpl = tx_power as f64 - rssi as f64;
+        let effective_tx = if tx_power == HCI_TX_POWER_INVALID {
+            match self.addr_type {
+                // bredr hci supports HCI_OP_READ_TX_POWER
+                // HCI_TX_POWER_INVALID == failure
+                AddressType::BrEdr => {
+                    return Err(Error::Unexpected(
+                        "BR/EDR controller returned TX power HCI_TX_POWER_INVALID".into(),
+                    ));
+                }
+                // le hci may not support HCI_OP_READ_TX_POWER
+                // use preconfigured fallback
+                _ => self.fallback_tx_power,
+            }
+        } else {
+            tx_power
+        };
+        let raw_rpl = effective_tx as f64 - rssi as f64;
         let filtered_rpl = self.denoise_filter.update(raw_rpl);
         debug!(raw_rpl, filtered_rpl, "relative path loss");
         Ok((filtered_rpl, raw_rpl))

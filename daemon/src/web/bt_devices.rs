@@ -14,10 +14,6 @@ fn prop_bool(props: &HashMap<String, OwnedValue>, key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn prop_u16(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u16> {
-    u16::try_from(props.get(key)?.clone()).ok()
-}
-
 fn prop_u32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
     u32::try_from(props.get(key)?.clone()).ok()
 }
@@ -44,11 +40,11 @@ pub(super) async fn list_bt_devices() -> Result<Vec<Value>, Box<dyn std::error::
             };
 
             let has_class = prop_u32(props, "Class").is_some();
-            let has_appearance = prop_u16(props, "Appearance").is_some();
-            let address_type = match (has_class, has_appearance) {
-                (_, false) if has_class => "br_edr",
-                (false, true) => "le_public",
-                (true, true) => "br_edr",
+            let address_type = match prop_str(props, "AddressType").as_deref() {
+                Some("public") => "le_public",
+                Some("random") | Some("static") => "le_random",
+                Some("brconly") => "br_edr",
+                _ if has_class => "br_edr",
                 _ => continue,
             };
 
@@ -98,15 +94,6 @@ mod tests {
         assert!(prop_bool(&props, "Connected"));
         assert!(!prop_bool(&props, "Paired"));
         assert!(!prop_bool(&props, "Nonexistent"));
-    }
-
-    #[test]
-    fn prop_u16_extracts_u16_and_handles_missing() {
-        let mut props = HashMap::new();
-        props.insert("Appearance".to_string(), OwnedValue::from(123u16));
-
-        assert_eq!(prop_u16(&props, "Appearance"), Some(123));
-        assert_eq!(prop_u16(&props, "Nonexistent"), None);
     }
 
     #[test]

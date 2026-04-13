@@ -32,6 +32,7 @@ const configForm = document.getElementById("config-form");
 const saveStatus = document.getElementById("save-status");
 let saveTimeout = null;
 let debounceTimer = null;
+let currentConfig = null;
 
 function setFormValue(name, value) {
     const el = configForm.elements[name];
@@ -47,6 +48,7 @@ async function loadConfig() {
     try {
         const res = await authFetch("/api/config");
         const cfg = await res.json();
+        currentConfig = cfg;
 
         setFormValue("daemon.mode", cfg.daemon.mode);
 
@@ -66,7 +68,7 @@ async function loadConfig() {
         setFormValue("le.disconnect_action", cfg.le.disconnect_action);
         setFormValue("le.lock_count", cfg.le.lock_count);
         setFormValue("le.unlock_count", cfg.le.unlock_count);
-        setFormValue("le.assumed_tx_power", cfg.le.assumed_tx_power);
+        setFormValue("le.fallback_tx_power", cfg.le.fallback_tx_power);
         setFormValue("le.poll_interval_ms", cfg.le.poll_interval_ms);
         setFormValue("le.disconnect_poll_interval_ms", cfg.le.disconnect_poll_interval_ms);
         setFormValue("le.kalman_q", cfg.le.kalman_q);
@@ -118,7 +120,7 @@ function collectConfig() {
             disconnect_action: getFormValue("le.disconnect_action"),
             lock_count: getFormValue("le.lock_count"),
             unlock_count: getFormValue("le.unlock_count"),
-            assumed_tx_power: getFormValue("le.assumed_tx_power"),
+            fallback_tx_power: getFormValue("le.fallback_tx_power"),
             poll_interval_ms: getFormValue("le.poll_interval_ms"),
             disconnect_poll_interval_ms: getFormValue("le.disconnect_poll_interval_ms"),
             kalman_q: getFormValue("le.kalman_q"),
@@ -334,27 +336,33 @@ function createAccordion(dev) {
 
     const bt = dev.bluetooth || {};
     const prox = dev.proximity || {};
+    const cfg = currentConfig || {};
+    const isLe = typeof dev.address_type === "string" && dev.address_type.startsWith("le");
+    const profileDefaults = (isLe ? cfg.le : cfg.br_edr) || {};
+    const ph = (v) => (v != null ? String(v) : "");
+    const actionLabel = { lock: "Lock", unlock: "Unlock", none: "None" };
+    const defaultActionText = actionLabel[profileDefaults.disconnect_action] ?? "global";
 
     acc.innerHTML =
         `<form class="device-config-form" data-mac="${dev.mac}">` +
         `<h4>Proximity</h4>` +
-        `<label>RPL threshold <input type="number" name="proximity.rpl_threshold" min="0.5" max="200" value="${prox.rpl_threshold ?? ""}" placeholder="global"></label>` +
+        `<label>RPL threshold <input type="number" name="proximity.rpl_threshold" min="0.5" max="200" value="${prox.rpl_threshold ?? ""}" placeholder="${ph(profileDefaults.rpl_threshold)}"></label>` +
         `<label>Disconnect action <select name="proximity.disconnect_action">` +
-        `<option value="" ${prox.disconnect_action == null ? "selected" : ""}>global</option>` +
+        `<option value="" ${prox.disconnect_action == null ? "selected" : ""}>${defaultActionText}</option>` +
         `<option value="lock" ${prox.disconnect_action === "lock" ? "selected" : ""}>Lock</option>` +
         `<option value="unlock" ${prox.disconnect_action === "unlock" ? "selected" : ""}>Unlock</option>` +
         `<option value="none" ${prox.disconnect_action === "none" ? "selected" : ""}>None</option>` +
         `</select></label>` +
-        `<label>Lock count <input type="number" name="proximity.lock_count" min="1" max="100" value="${prox.lock_count ?? ""}" placeholder="global"></label>` +
-        `<label>Unlock count <input type="number" name="proximity.unlock_count" min="1" max="100" value="${prox.unlock_count ?? ""}" placeholder="global"></label>` +
-        `<label>Kalman Q <input type="number" name="proximity.kalman_q" min="0.01" max="10" value="${prox.kalman_q ?? ""}" placeholder="global"></label>` +
-        `<label>Kalman R <input type="number" name="proximity.kalman_r" min="0.1" max="100" value="${prox.kalman_r ?? ""}" placeholder="global"></label>` +
-        `<label>Kalman initial <input type="number" name="proximity.kalman_initial" min="0.1" max="200" value="${prox.kalman_initial ?? ""}" placeholder="global"></label>` +
-        `<label>Assumed TX power (dBm) <input type="number" name="proximity.assumed_tx_power" min="-127" max="126" value="${prox.assumed_tx_power ?? ""}" placeholder="global"></label>` +
+        `<label>Lock count <input type="number" name="proximity.lock_count" min="1" max="100" value="${prox.lock_count ?? ""}" placeholder="${ph(profileDefaults.lock_count)}"></label>` +
+        `<label>Unlock count <input type="number" name="proximity.unlock_count" min="1" max="100" value="${prox.unlock_count ?? ""}" placeholder="${ph(profileDefaults.unlock_count)}"></label>` +
+        `<label>Kalman Q <input type="number" name="proximity.kalman_q" min="0.01" max="10" value="${prox.kalman_q ?? ""}" placeholder="${ph(profileDefaults.kalman_q)}"></label>` +
+        `<label>Kalman R <input type="number" name="proximity.kalman_r" min="0.1" max="100" value="${prox.kalman_r ?? ""}" placeholder="${ph(profileDefaults.kalman_r)}"></label>` +
+        `<label>Kalman initial <input type="number" name="proximity.kalman_initial" min="0.1" max="200" value="${prox.kalman_initial ?? ""}" placeholder="${ph(profileDefaults.kalman_initial)}"></label>` +
+        (isLe ? `<label>Fallback TX power (dBm) <input type="number" name="proximity.fallback_tx_power" min="-127" max="126" value="${prox.fallback_tx_power ?? ""}" placeholder="${ph(profileDefaults.fallback_tx_power)}"></label>` : ``) +
         `<h4>Bluetooth</h4>` +
-        `<label>Adapter index <input type="number" name="bluetooth.adapter_index" min="0" max="65535" value="${bt.adapter_index ?? ""}" placeholder="global"></label>` +
-        `<label>Poll interval (ms) <input type="number" name="bluetooth.poll_interval_ms" min="100" max="60000" value="${bt.poll_interval_ms ?? ""}" placeholder="global"></label>` +
-        `<label>Disconnect poll interval (ms) <input type="number" name="bluetooth.disconnect_poll_interval_ms" min="100" max="60000" value="${bt.disconnect_poll_interval_ms ?? ""}" placeholder="global"></label>` +
+        `<label>Adapter index <input type="number" name="bluetooth.adapter_index" min="0" max="65535" value="${bt.adapter_index ?? ""}" placeholder="${ph(cfg.adapter_index)}"></label>` +
+        `<label>Poll interval (ms) <input type="number" name="bluetooth.poll_interval_ms" min="100" max="60000" value="${bt.poll_interval_ms ?? ""}" placeholder="${ph(profileDefaults.poll_interval_ms)}"></label>` +
+        `<label>Disconnect poll interval (ms) <input type="number" name="bluetooth.disconnect_poll_interval_ms" min="100" max="60000" value="${bt.disconnect_poll_interval_ms ?? ""}" placeholder="${ph(profileDefaults.disconnect_poll_interval_ms)}"></label>` +
         `</form>`;
 
     acc.querySelector("form").addEventListener("change", () => {
@@ -397,7 +405,7 @@ function collectDeviceConfig(mac) {
             kalman_r: optNum("proximity.kalman_r"),
             kalman_initial: optNum("proximity.kalman_initial"),
             disconnect_action: optStr("proximity.disconnect_action"),
-            assumed_tx_power: optNum("proximity.assumed_tx_power"),
+            fallback_tx_power: optNum("proximity.fallback_tx_power"),
         },
     };
 }
@@ -480,8 +488,10 @@ document.getElementById("refresh-devices-btn").addEventListener("click", loadDev
 
 // --- Init ---
 
-loadConfig();
-loadDevices();
+(async () => {
+    await loadConfig();
+    loadDevices();
+})();
 
 let fetchPending = false;
 async function scheduledFetch() {

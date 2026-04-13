@@ -55,6 +55,19 @@ input[type="number"]::-webkit-inner-spin-button {
     vertical-align: top;
 }
 
+.device-config-form input::placeholder {
+    font-style: italic;
+    opacity: 0.8;
+}
+
+.device-config-form select:has(option[value=""]:checked) {
+    font-style: italic;
+}
+
+.device-config-form option[value=""] {
+    font-style: italic;
+}
+
 .device-card {
     width: 100%;
     margin: 1rem 0;

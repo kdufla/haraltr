@@ -38,6 +38,15 @@
         <form id="config-form">
             <fieldset>
                 <legend>Configuration</legend>
+                <h3>Daemon</h3>
+                <label>Mode
+                    <select name="daemon.mode">
+                        <option value="both">Both</option>
+                        <option value="pam_only">PAM only</option>
+                        <option value="lock_only">Lock only</option>
+                    </select>
+                </label>
+
                 <h3>BR/EDR Defaults</h3>
                 <label>RPL threshold
                     <input type="number" name="br_edr.rpl_threshold" min="0.5" max="100">

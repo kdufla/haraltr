@@ -48,6 +48,8 @@ async function loadConfig() {
         const res = await authFetch("/api/config");
         const cfg = await res.json();
 
+        setFormValue("daemon.mode", cfg.daemon.mode);
+
         setFormValue("adapter_index", cfg.adapter_index);
 
         setFormValue("br_edr.rpl_threshold", cfg.br_edr.rpl_threshold);
@@ -96,6 +98,9 @@ function getFormValue(name) {
 
 function collectConfig() {
     return {
+        daemon: {
+            mode: getFormValue("daemon.mode"),
+        },
         adapter_index: getFormValue("adapter_index"),
         br_edr: {
             rpl_threshold: getFormValue("br_edr.rpl_threshold"),

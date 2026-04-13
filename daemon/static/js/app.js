@@ -11,12 +11,6 @@ function route() {
 window.addEventListener("hashchange", route);
 route();
 
-document.getElementById("advanced-toggle").addEventListener("change", (e) => {
-    document.querySelectorAll(".advanced").forEach(el => {
-        el.hidden = !e.target.checked;
-    });
-});
-
 async function authFetch(url, opts) {
     const res = await fetch(url, opts);
     if (res.status === 401) {
@@ -199,21 +193,33 @@ function getOrCreateDeviceCard(mac) {
 
     document.getElementById("device-cards").appendChild(card);
 
+    const axisStyle = {
+        stroke: "#ddd",
+        labelSize: 14,
+        grid: { stroke: "#444", width: 1 },
+        ticks: { stroke: "#666", width: 1 },
+    };
     const opts = {
         width: chartContainer.clientWidth || 600,
         height: 250,
+        scales: { x: { time: false } },
         series: [
-            {},
-            { label: "Filtered", stroke: "cyan", width: 2 },
-            { label: "Raw", stroke: "gray", width: 1, dash: [4, 4] },
+            { label: "t" },
+            { label: "Filtered", stroke: "#4fc3f7", width: 2 },
+            { label: "Raw", stroke: "#ffb74d", width: 1, dash: [4, 4] },
         ],
         axes: [
-            { label: "Time (s)" },
-            { label: "RPL" },
+            { ...axisStyle, label: "Time (s)" },
+            { ...axisStyle, label: "RPL" },
         ],
     };
     const chartData = [[], [], []];
     const chart = new uPlot(opts, [[], [], []], chartContainer);
+
+    new ResizeObserver(() => {
+        const w = chartContainer.clientWidth;
+        if (w > 0) chart.setSize({ width: w, height: 250 });
+    }).observe(chartContainer);
 
     const entry = { chartData, chart };
     deviceState.set(mac, entry);
@@ -324,29 +330,26 @@ function createAccordion(dev) {
     const bt = dev.bluetooth || {};
     const prox = dev.proximity || {};
 
-    // TODO I'm no js expert but I can't imagine this being a good practice
     acc.innerHTML =
         `<form class="device-config-form" data-mac="${dev.mac}">` +
-        `<fieldset><legend>Proximity</legend>` +
-        `<label>RPL threshold <input type="number" name="proximity.rpl_threshold" min="0.5" max="200" step="0.5" value="${prox.rpl_threshold ?? ""}" placeholder="global"></label>` +
+        `<h4>Proximity</h4>` +
+        `<label>RPL threshold <input type="number" name="proximity.rpl_threshold" min="0.5" max="200" value="${prox.rpl_threshold ?? ""}" placeholder="global"></label>` +
         `<label>Disconnect action <select name="proximity.disconnect_action">` +
         `<option value="" ${prox.disconnect_action == null ? "selected" : ""}>global</option>` +
         `<option value="lock" ${prox.disconnect_action === "lock" ? "selected" : ""}>Lock</option>` +
         `<option value="unlock" ${prox.disconnect_action === "unlock" ? "selected" : ""}>Unlock</option>` +
         `<option value="none" ${prox.disconnect_action === "none" ? "selected" : ""}>None</option>` +
         `</select></label>` +
-        `<label>Lock count <input type="number" name="proximity.lock_count" min="1" max="100" step="1" value="${prox.lock_count ?? ""}" placeholder="global"></label>` +
-        `<label>Unlock count <input type="number" name="proximity.unlock_count" min="1" max="100" step="1" value="${prox.unlock_count ?? ""}" placeholder="global"></label>` +
-        `<label>Kalman Q <input type="number" name="proximity.kalman_q" min="0.01" max="10" step="0.01" value="${prox.kalman_q ?? ""}" placeholder="global"></label>` +
-        `<label>Kalman R <input type="number" name="proximity.kalman_r" min="0.1" max="100" step="0.1" value="${prox.kalman_r ?? ""}" placeholder="global"></label>` +
-        `<label>Kalman initial <input type="number" name="proximity.kalman_initial" min="0.1" max="200" step="0.1" value="${prox.kalman_initial ?? ""}" placeholder="global"></label>` +
-        `<label>Assumed TX power (dBm) <input type="number" name="proximity.assumed_tx_power" min="-127" max="126" step="1" value="${prox.assumed_tx_power ?? ""}" placeholder="global"></label>` +
-        `</fieldset>` +
-        `<fieldset><legend>Bluetooth</legend>` +
-        `<label>Adapter index <input type="number" name="bluetooth.adapter_index" min="0" max="65535" step="1" value="${bt.adapter_index ?? ""}" placeholder="global"></label>` +
-        `<label>Poll interval (ms) <input type="number" name="bluetooth.poll_interval_ms" min="100" max="60000" step="100" value="${bt.poll_interval_ms ?? ""}" placeholder="global"></label>` +
-        `<label>Disconnect poll interval (ms) <input type="number" name="bluetooth.disconnect_poll_interval_ms" min="100" max="60000" step="100" value="${bt.disconnect_poll_interval_ms ?? ""}" placeholder="global"></label>` +
-        `</fieldset>` +
+        `<label>Lock count <input type="number" name="proximity.lock_count" min="1" max="100" value="${prox.lock_count ?? ""}" placeholder="global"></label>` +
+        `<label>Unlock count <input type="number" name="proximity.unlock_count" min="1" max="100" value="${prox.unlock_count ?? ""}" placeholder="global"></label>` +
+        `<label>Kalman Q <input type="number" name="proximity.kalman_q" min="0.01" max="10" value="${prox.kalman_q ?? ""}" placeholder="global"></label>` +
+        `<label>Kalman R <input type="number" name="proximity.kalman_r" min="0.1" max="100" value="${prox.kalman_r ?? ""}" placeholder="global"></label>` +
+        `<label>Kalman initial <input type="number" name="proximity.kalman_initial" min="0.1" max="200" value="${prox.kalman_initial ?? ""}" placeholder="global"></label>` +
+        `<label>Assumed TX power (dBm) <input type="number" name="proximity.assumed_tx_power" min="-127" max="126" value="${prox.assumed_tx_power ?? ""}" placeholder="global"></label>` +
+        `<h4>Bluetooth</h4>` +
+        `<label>Adapter index <input type="number" name="bluetooth.adapter_index" min="0" max="65535" value="${bt.adapter_index ?? ""}" placeholder="global"></label>` +
+        `<label>Poll interval (ms) <input type="number" name="bluetooth.poll_interval_ms" min="100" max="60000" value="${bt.poll_interval_ms ?? ""}" placeholder="global"></label>` +
+        `<label>Disconnect poll interval (ms) <input type="number" name="bluetooth.disconnect_poll_interval_ms" min="100" max="60000" value="${bt.disconnect_poll_interval_ms ?? ""}" placeholder="global"></label>` +
         `</form>`;
 
     acc.querySelector("form").addEventListener("change", () => {

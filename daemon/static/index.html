@@ -5,17 +5,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>haraltr</title>
-    <link rel="stylesheet" href="/css/style.css">
     <link rel="stylesheet" href="/css/water.min.css">
+    <link rel="stylesheet" href="/css/style.css">
     <link rel="stylesheet" href="/css/uPlot.min.css">
 </head>
 
 <body>
     <nav>
-        <strong>haraltr</strong>
-        <a href="#config">Config</a>
-        <a href="#monitor">Monitor</a>
-        <button id="logout-btn">Logout</button>
+        <div class="nav-left">
+            <a href="#config">Config</a>
+            <a href="#monitor">Monitor</a>
+        </div>
+        <strong class="nav-title">haraltr</strong>
+        <div class="nav-right">
+            <button id="logout-btn">Logout</button>
+        </div>
     </nav>
 
     <div id="save-status"></div>
@@ -31,16 +35,12 @@
             <ul id="available-devices"></ul>
         </fieldset>
 
-        <label class="toggle">Advanced
-            <input type="checkbox" id="advanced-toggle">
-            <span class="slider"></span>
-        </label>
-
         <form id="config-form">
             <fieldset>
-                <legend>BR/EDR Defaults</legend>
+                <legend>Configuration</legend>
+                <h3>BR/EDR Defaults</h3>
                 <label>RPL threshold
-                    <input type="number" name="br_edr.rpl_threshold" min="0.5" max="100" step="0.5">
+                    <input type="number" name="br_edr.rpl_threshold" min="0.5" max="100">
                 </label>
                 <label>Disconnect action
                     <select name="br_edr.disconnect_action">
@@ -50,32 +50,30 @@
                     </select>
                 </label>
                 <label>Lock count
-                    <input type="number" name="br_edr.lock_count" min="1" max="100" step="1">
+                    <input type="number" name="br_edr.lock_count" min="1" max="100">
                 </label>
                 <label>Unlock count
-                    <input type="number" name="br_edr.unlock_count" min="1" max="100" step="1">
+                    <input type="number" name="br_edr.unlock_count" min="1" max="100">
                 </label>
-                <label class="advanced" hidden>Poll interval (ms)
-                    <input type="number" name="br_edr.poll_interval_ms" min="100" max="60000" step="100">
+                <label>Poll interval (ms)
+                    <input type="number" name="br_edr.poll_interval_ms" min="100" max="60000">
                 </label>
-                <label class="advanced" hidden>Disconnect poll interval (ms)
-                    <input type="number" name="br_edr.disconnect_poll_interval_ms" min="100" max="60000" step="100">
+                <label>Disconnected poll interval (ms)
+                    <input type="number" name="br_edr.disconnect_poll_interval_ms" min="100" max="60000">
                 </label>
-                <label class="advanced" hidden>Kalman Q (process noise)
-                    <input type="number" name="br_edr.kalman_q" min="0.01" max="10" step="0.01">
+                <label>Kalman Q
+                    <input type="number" name="br_edr.kalman_q" min="0.01" max="10">
                 </label>
-                <label class="advanced" hidden>Kalman R (measurement noise)
-                    <input type="number" name="br_edr.kalman_r" min="0.1" max="100" step="0.1">
+                <label>Kalman R
+                    <input type="number" name="br_edr.kalman_r" min="0.1" max="100">
                 </label>
-                <label class="advanced" hidden>Kalman initial estimate
-                    <input type="number" name="br_edr.kalman_initial" min="0.1" max="100" step="0.1">
+                <label>Kalman initial
+                    <input type="number" name="br_edr.kalman_initial" min="0.1" max="100">
                 </label>
-            </fieldset>
 
-            <fieldset>
-                <legend>LE Defaults</legend>
+                <h3>LE Defaults</h3>
                 <label>RPL threshold
-                    <input type="number" name="le.rpl_threshold" min="0.5" max="200" step="0.5">
+                    <input type="number" name="le.rpl_threshold" min="0.5" max="200">
                 </label>
                 <label>Disconnect action
                     <select name="le.disconnect_action">
@@ -85,55 +83,49 @@
                     </select>
                 </label>
                 <label>Lock count
-                    <input type="number" name="le.lock_count" min="1" max="100" step="1">
+                    <input type="number" name="le.lock_count" min="1" max="100">
                 </label>
                 <label>Unlock count
-                    <input type="number" name="le.unlock_count" min="1" max="100" step="1">
+                    <input type="number" name="le.unlock_count" min="1" max="100">
                 </label>
-                <label>Assumed TX power (dBm, fallback when 127)
-                    <input type="number" name="le.assumed_tx_power" min="-127" max="126" step="1">
+                <label>Fallback TX
+                    <input type="number" name="le.fallback_tx" min="-127" max="126">
                 </label>
-                <label class="advanced" hidden>Poll interval (ms)
-                    <input type="number" name="le.poll_interval_ms" min="100" max="60000" step="100">
+                <label>Poll interval (ms)
+                    <input type="number" name="le.poll_interval_ms" min="100" max="60000">
                 </label>
-                <label class="advanced" hidden>Disconnect poll interval (ms)
-                    <input type="number" name="le.disconnect_poll_interval_ms" min="100" max="60000" step="100">
+                <label>Disconnected poll interval (ms)
+                    <input type="number" name="le.disconnect_poll_interval_ms" min="100" max="60000">
                 </label>
-                <label class="advanced" hidden>Kalman Q (process noise)
-                    <input type="number" name="le.kalman_q" min="0.01" max="10" step="0.01">
+                <label>Kalman Q
+                    <input type="number" name="le.kalman_q" min="0.01" max="10">
                 </label>
-                <label class="advanced" hidden>Kalman R (measurement noise)
-                    <input type="number" name="le.kalman_r" min="0.1" max="100" step="0.1">
+                <label>Kalman R
+                    <input type="number" name="le.kalman_r" min="0.1" max="100">
                 </label>
-                <label class="advanced" hidden>Kalman initial estimate
-                    <input type="number" name="le.kalman_initial" min="0.1" max="200" step="0.1">
+                <label>Kalman initial
+                    <input type="number" name="le.kalman_initial" min="0.1" max="200">
                 </label>
-            </fieldset>
 
-            <fieldset class="advanced" hidden>
-                <legend>Bluetooth</legend>
+                <h3>Bluetooth</h3>
                 <label>Adapter index
-                    <input type="number" name="adapter_index" min="0" max="65535" step="1">
+                    <input type="number" name="adapter_index" min="0" max="65535">
                 </label>
-            </fieldset>
 
-            <fieldset class="advanced" hidden>
-                <legend>Wake</legend>
-                <label>Duration (seconds)
-                    <input type="number" name="wake.duration_secs" min="1" max="30" step="1">
+                <h3>Wake</h3>
+                <label>Duration (s)
+                    <input type="number" name="wake.duration_secs" min="1" max="30">
                 </label>
                 <label>Mouse interval (ms)
-                    <input type="number" name="wake.mouse_interval_ms" min="50" max="5000" step="50">
+                    <input type="number" name="wake.mouse_interval_ms" min="50" max="5000">
                 </label>
                 <label>Enter interval (ms)
-                    <input type="number" name="wake.enter_interval_ms" min="500" max="30000" step="500">
+                    <input type="number" name="wake.enter_interval_ms" min="500" max="30000">
                 </label>
-            </fieldset>
 
-            <fieldset class="advanced" hidden>
-                <legend>Web</legend>
+                <h3>Web</h3>
                 <label>Port
-                    <input type="number" name="web.port" min="1" max="65535" step="1">
+                    <input type="number" name="web.port" min="1" max="65535">
                 </label>
             </fieldset>
         </form>

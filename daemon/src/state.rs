@@ -11,11 +11,11 @@ use std::{
 use rand::Rng;
 use serde::Serialize;
 
-use crate::{config::Config, web::auth::AUTH_SESSION_DURATION};
+use crate::{config::Config, mac::Mac, web::auth::AUTH_SESSION_DURATION};
 
 #[derive(Debug)]
 pub struct DeviceAction {
-    pub target_mac: String,
+    pub target_mac: Mac,
     pub action: crate::proximity::Action,
 }
 
@@ -27,21 +27,21 @@ pub struct DeviceStatus {
     pub connected: bool,
 }
 
-// TODO this is stripped down kinda useless
-// multi-device should be fixed for web and ipc
+// TODO multi-device made this too small
+// I need to restructure state data before alpha
 pub struct DaemonStatus {
-    pub devices: HashMap<String, DeviceStatus>,
+    pub devices: HashMap<Mac, DeviceStatus>,
     pub started_at: Instant,
 }
 
 impl DaemonStatus {
-    pub fn is_any_near(&self, user_macs: &[String]) -> bool {
+    pub fn is_any_near(&self, user_macs: &[Mac]) -> bool {
         self.devices.iter().any(|(mac, dev_status)| {
             user_macs.contains(mac) && dev_status.phase == ProximityPhase::Near
         })
     }
 
-    pub fn is_any_far(&self, user_macs: &[String]) -> bool {
+    pub fn is_any_far(&self, user_macs: &[Mac]) -> bool {
         self.devices.iter().any(|(mac, dev_status)| {
             user_macs.contains(mac) && dev_status.phase == ProximityPhase::Far
         })
@@ -85,7 +85,7 @@ impl AppState {
         ds.devices.clear();
     }
 
-    pub fn update_device(&self, mac: String, status: DeviceStatus) {
+    pub fn update_device(&self, mac: Mac, status: DeviceStatus) {
         let mut ds = self.daemon_status.lock().unwrap();
         ds.devices.insert(mac, status);
     }

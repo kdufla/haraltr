@@ -11,7 +11,7 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-use crate::state::AppState;
+use crate::{mac::Mac, state::AppState};
 
 pub fn spawn_ipc_listener(app_state: &Arc<AppState>) {
     let state = app_state.clone();
@@ -72,13 +72,13 @@ async fn handle_connection(mut stream: UnixStream, app_state: &AppState) -> std:
 
     let uid = u32::from_le_bytes(query[1..5].try_into().unwrap());
 
-    let user_macs: Vec<String> = {
+    let user_macs: Vec<Mac> = {
         let config = app_state.config.read().unwrap();
         config
             .devices
             .iter()
             .filter(|dev| dev.uid == uid)
-            .map(|dev| dev.target_mac.clone())
+            .filter_map(|dev| dev.target_mac.parse().ok())
             .collect()
     };
 

@@ -4,6 +4,7 @@ mod device;
 mod input;
 mod ipc;
 mod logind;
+mod mac;
 mod passwd;
 mod proximity;
 mod state;
@@ -33,6 +34,7 @@ use crate::{
     device::spawn_device_task,
     ipc::spawn_ipc_listener,
     logind::watcher::{NO_ACTIVE_UID, spawn_session_watcher},
+    mac::Mac,
     proximity::Action,
     state::{AppState, DaemonStatus, DeviceAction},
     wake_up::wake_screen,
@@ -112,26 +114,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let (action_tx, mut action_rx) = mpsc::channel::<DeviceAction>(user_devices.len() * 4);
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
-        let mut spawned_macs = HashSet::new();
+        let mut spawned_macs: HashSet<Mac> = HashSet::new();
 
         for device in &user_devices {
-            if spawned_macs.insert(device.target_mac.clone()) {
+            let target_mac = match device.target_mac.parse() {
+                Ok(m) => m,
+                Err(e) => {
+                    error!(mac = %device.target_mac, uid = device.uid, "skip device with invalid MAC: {e}");
+                    continue;
+                }
+            };
+            if spawned_macs.insert(target_mac) {
                 let handle = spawn_device_task(
-                    device.target_mac.clone(),
+                    target_mac,
                     config.bluetooth_for_device(device),
                     config.proximity_for_device(device),
                     app_state.clone(),
                     action_tx.clone(),
                 );
                 handles.push(handle);
-                info!(mac = %device.target_mac, uid = current_uid, "spawned device monitor");
+                info!(mac = %target_mac, uid = current_uid, "spawned device monitor");
             }
         }
         drop(action_tx);
 
-        let mut device_wants: HashMap<String, Action> = spawned_macs
+        let mut device_wants: HashMap<Mac, Action> = spawned_macs
             .iter()
-            .map(|mac| (mac.clone(), Action::Unlock))
+            .map(|&mac| (mac, Action::Unlock))
             .collect();
         let mut was_near = true;
 
@@ -151,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     }
 
-                    device_wants.insert(device_action.target_mac.clone(), device_action.action);
+                    device_wants.insert(device_action.target_mac, device_action.action);
 
                     if !matches!(mode, DaemonMode::Both | DaemonMode::LockOnly) {
                         continue;

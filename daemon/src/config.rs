@@ -9,6 +9,8 @@ use tracing::info;
 use validator::{Validate, ValidationError};
 use xdg::BaseDirectories;
 
+use crate::mac::Mac;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
 #[validate(schema(function = "validate_config_schema"))]
 pub struct Config {
@@ -398,22 +400,19 @@ pub struct ProximityOverrides {
 }
 
 pub fn validate_mac(mac: &str) -> Result<(), ValidationError> {
-    let parts: Vec<&str> = mac.split(':').collect();
-    if parts.len() == 6
-        && parts
-            .iter()
-            .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
-    {
-        Ok(())
-    } else {
-        Err(ValidationError::new("invalid mac"))
-    }
+    mac.parse::<Mac>()
+        .map(|_| ())
+        .map_err(|_| ValidationError::new("invalid mac"))
 }
 
 fn validate_config_schema(config: &Config) -> Result<(), ValidationError> {
     let mut seen_macs = HashSet::new();
     for dev in &config.devices {
-        if !seen_macs.insert(&dev.target_mac) {
+        let parsed = dev
+            .target_mac
+            .parse::<Mac>()
+            .map_err(|_| ValidationError::new("invalid mac"))?;
+        if !seen_macs.insert(parsed) {
             return Err(ValidationError::new("duplicate mac"));
         }
     }

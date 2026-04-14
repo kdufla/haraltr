@@ -10,6 +10,7 @@ use crate::{
         AddressTypeConfig, BluetoothOverrides, Config, ConfigError, DeviceEntry,
         ProximityOverrides, validate_mac,
     },
+    mac::Mac,
     state::AppState,
     web::bt_devices::list_bt_devices,
 };
@@ -141,18 +142,17 @@ pub(super) async fn get_devices_handler(State(state): State<Arc<AppState>>) -> i
     let active_uid = state.active_uid();
     let config = state.config.read().unwrap();
 
-    let device_entries: HashMap<&str, &DeviceEntry> = config
+    let device_entries: HashMap<Mac, &DeviceEntry> = config
         .devices
         .iter()
-        .map(|d| (d.target_mac.as_str(), d))
+        .filter_map(|d| d.target_mac.parse::<Mac>().ok().map(|m| (m, d)))
         .collect();
 
     let mut devices: Vec<_> = bt_devices
         .into_iter()
         .filter_map(|mut dev| {
-            let mac = dev["mac"].as_str().unwrap_or("").to_owned();
-            if let Some(entry) = device_entries.get(mac.as_str()) {
-                // Hide devices owned by other users
+            let mac = dev["mac"].as_str().and_then(|str| str.parse().ok());
+            if let Some(entry) = mac.and_then(|m| device_entries.get(&m)) {
                 if entry.uid != active_uid {
                     return None;
                 }
@@ -214,10 +214,11 @@ pub(super) async fn add_device_handler(
 
     let mut new_config = (*state.config.read().unwrap()).clone();
 
+    let body_mac: Mac = body.target_mac.parse().unwrap();
     if new_config
         .devices
         .iter()
-        .any(|d| d.target_mac == body.target_mac)
+        .any(|d| d.target_mac.parse().ok() == Some(body_mac))
     {
         return (
             StatusCode::CONFLICT,
@@ -228,7 +229,7 @@ pub(super) async fn add_device_handler(
 
     new_config.devices.push(DeviceEntry {
         uid,
-        target_mac: body.target_mac.clone(),
+        target_mac: body.target_mac,
         address_type: body.address_type,
         name: body.name,
         bluetooth: body.bluetooth,
@@ -254,8 +255,9 @@ pub(super) async fn add_device_handler(
     Json(json!({"ok": true})).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
 pub(super) struct RemoveDeviceRequest {
+    #[validate(custom(function = "validate_mac"))]
     target_mac: String,
 }
 
@@ -263,12 +265,21 @@ pub(super) async fn remove_device_handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RemoveDeviceRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = body.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("invalid request: {e}")})),
+        )
+            .into_response();
+    }
+
+    let body_mac: Mac = body.target_mac.parse().unwrap();
     let mut new_config = (*state.config.read().unwrap()).clone();
 
     let before_len = new_config.devices.len();
     new_config
         .devices
-        .retain(|d| d.target_mac != body.target_mac);
+        .retain(|d| d.target_mac.parse().ok() != Some(body_mac));
 
     if new_config.devices.len() == before_len {
         return (
@@ -323,10 +334,11 @@ pub(super) async fn update_device_handler(
 
     let mut new_config = (*state.config.read().unwrap()).clone();
 
+    let body_mac: Mac = body.target_mac.parse().unwrap();
     let device = new_config
         .devices
         .iter_mut()
-        .find(|d| d.target_mac == body.target_mac);
+        .find(|d| d.target_mac.parse().ok() == Some(body_mac));
 
     let Some(device) = device else {
         return (
@@ -383,7 +395,7 @@ mod tests {
         use crate::state::DeviceStatus;
         let mut devices = HashMap::new();
         devices.insert(
-            "24:29:34:8E:0A:58".into(),
+            "24:29:34:8E:0A:58".parse().unwrap(),
             DeviceStatus {
                 rpl: Some(12.3),
                 raw_rpl: Some(14.1),

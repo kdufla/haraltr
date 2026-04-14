@@ -6,19 +6,20 @@ use tracing::{debug, error};
 use crate::{
     bt_mgmt::BtMgmt,
     config::{BluetoothConfig, ProximityConfig},
+    mac::Mac,
     proximity::{Action, ProxState, Reading},
     state::{AppState, DeviceAction, DeviceStatus},
 };
 
 pub fn spawn_device_task(
-    target_mac: String,
+    target_mac: Mac,
     bt_config: BluetoothConfig,
     prox_config: ProximityConfig,
     app_state: Arc<AppState>,
     action_tx: mpsc::Sender<DeviceAction>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut bt = match BtMgmt::new(&target_mac, &bt_config, &prox_config) {
+        let mut bt = match BtMgmt::new(target_mac, &bt_config, &prox_config) {
             Ok(bt) => bt,
             Err(e) => {
                 error!(mac = %target_mac, "failed to create BtMgmt: {e}");
@@ -50,7 +51,7 @@ pub fn spawn_device_task(
             let is_disconnected = prox_state.is_disconnected();
 
             app_state.update_device(
-                target_mac.clone(),
+                target_mac,
                 DeviceStatus {
                     rpl,
                     raw_rpl,
@@ -60,12 +61,7 @@ pub fn spawn_device_task(
             );
 
             if action != Action::None {
-                let _ = action_tx
-                    .send(DeviceAction {
-                        target_mac: target_mac.clone(),
-                        action,
-                    })
-                    .await;
+                let _ = action_tx.send(DeviceAction { target_mac, action }).await;
             }
 
             if was_disconnected != is_disconnected {

@@ -6,7 +6,10 @@ use btmgmt::{
 use btmgmt_packet::{Address, AddressType};
 use tracing::{debug, trace};
 
-use crate::config::{AddressTypeConfig, BluetoothConfig, ProximityConfig};
+use crate::{
+    config::{AddressTypeConfig, BluetoothConfig, ProximityConfig},
+    mac::Mac,
+};
 
 const HCI_TX_POWER_INVALID: i8 = 127;
 
@@ -22,14 +25,11 @@ pub struct BtMgmt {
 
 impl BtMgmt {
     pub fn new(
-        target_mac: &str,
+        target_mac: Mac,
         bt_config: &BluetoothConfig,
         prox_config: &ProximityConfig,
     ) -> Result<Self> {
-        let target_mac: Address = target_mac
-            .parse::<bdaddr::Address>()
-            .expect("invalid target MAC address")
-            .into();
+        let target_mac: Address = bdaddr::Address::from(target_mac).into();
 
         let addr_type = match bt_config.address_type {
             AddressTypeConfig::BrEdr => AddressType::BrEdr,
@@ -79,6 +79,8 @@ impl BtMgmt {
         let cmd = GetConnectionInformation::new(self.target_mac.clone(), self.addr_type.clone());
         let reply = self.client.call(self.adapter_index, cmd).await?;
 
+        // bt spec: "If the RSSI cannot be read, the RSSI parameter shall be set to 127"
+        // TODO what should happen if it's 127?
         let rssi = *reply.rssi() as i8;
         let tx_power = *reply.tx_power() as i8;
         trace!(rssi, tx_power, "connection info");

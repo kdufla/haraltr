@@ -7,9 +7,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use validator::{Validate, ValidationError};
-use xdg::BaseDirectories;
 
 use crate::mac::Mac;
+
+const SYSTEM_CONFIG_PATH: &str = "/etc/haraltr/config.toml";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
 #[validate(schema(function = "validate_config_schema"))]
@@ -433,15 +434,15 @@ fn ensure_config_file() -> Result<PathBuf, ConfigError> {
         }
     }
 
-    let xdg = BaseDirectories::with_prefix("haraltr");
-
-    if let Some(path) = xdg.find_config_file("config.toml") {
+    let path = PathBuf::from(SYSTEM_CONFIG_PATH);
+    if path.exists() {
         return Ok(path);
     }
 
-    let path = xdg.place_config_file("config.toml")?;
-    let defaults = Config::default();
-    defaults.save_to_file(&path)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Config::default().save_to_file(&path)?;
     Ok(path)
 }
 

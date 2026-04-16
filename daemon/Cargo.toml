@@ -7,9 +7,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-argon2 = { version = "0.5", features = ["std"] }
-axum = "0.8"
-axum-extra = { version = "0.12", features = ["cookie"] }
+argon2 = { version = "0.5.3", features = ["std"] }
+axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
 bdaddr = "0.1.2"
 btmgmt = "0.2.5"
 btmgmt-packet = "0.2.5"
@@ -18,24 +18,24 @@ colored = "3.1.1"
 common = { path = "../common" }
 cookie = "0.18.1"
 evdev = "0.13.2"
-futures-lite = "2.6"
-hex = "0.4"
+futures-lite = "2.6.1"
+hex = "0.4.3"
 libc = "0.2.180"
 mime_guess = "2.0.5"
-rand = "0.10"
-rpassword = "7"
-rust-embed = { version = "8", features = ["debug-embed"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+rand = "0.10.1"
+rpassword = "7.4.0"
+rust-embed = { version = "8.11.0", features = ["debug-embed"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.52.0", features = ["full"] }
 toml = "0.9.8"
-tower = { version = "0.5", features = ["limit"] }
-tower-http = { version = "0.6", features = ["fs", "set-header"] }
+tower = { version = "0.5.3", features = ["limit"] }
+tower-http = { version = "0.6.8", features = ["fs", "set-header"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.20.0", features = ["derive"] }
 zbus = "5.13.2"
-zeroize = "1"
+zeroize = "1.8.2"
 
 [dev-dependencies]
 http-body-util = "0.1.3"

@@ -11,6 +11,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 common = { path = "../common" }
-libc = "0.2"
+libc = "0.2.185"
 nonstick = "0.1.1"
 syslog = "7.0.0"

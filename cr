@@ -26,7 +26,7 @@ sudo systemd-run \
     --system \
     --unit="$UNIT" \
     -E RUST_LOG="$LOG_LEVEL" \
-    "$BINARY_PATH"
+    "$BINARY_PATH" run
 
 echo "following journal (Ctrl+C to stop)"
 journalctl -f --since="$START"

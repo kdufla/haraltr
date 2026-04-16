@@ -20,6 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use clap::{Parser, Subcommand};
 use common::IPC_SOCKET_PATH;
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -40,11 +41,33 @@ use crate::{
     wake_up::wake_screen,
 };
 
+#[derive(Parser)]
+#[command(
+    name = "haraltr",
+    bin_name = "haraltr",
+    version,
+    about = "Proximity-based authentication daemon",
+    disable_help_subcommand = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Start the daemon
+    Run,
+    /// Set web UI password
+    Passwd,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("passwd") {
-        return passwd::set_password();
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Passwd => return passwd::set_password(),
+        Command::Run => {}
     }
 
     init_tracing();
